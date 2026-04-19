@@ -131,6 +131,8 @@ class WhatsAppAdapter(BasePlatformAdapter):
         super().__init__(config, Platform.WHATSAPP)
         self._bridge_process: Optional[subprocess.Popen] = None
         self._bridge_port: int = config.extra.get("bridge_port", int(os.environ.get("WHATSAPP_BRIDGE_PORT", "3300")))
+        wsl_ip = os.popen("hostname -I 2>/dev/null | awk '{print $1}'").read().strip()
+        self._bridge_base: str = f"http://{wsl_ip}:{self._bridge_port}" if wsl_ip else f"http://127.0.0.1:{self._bridge_port}"
         self._bridge_script: Optional[str] = config.extra.get(
             "bridge_script",
             str(self._DEFAULT_BRIDGE_DIR / "bridge.js"),
@@ -270,7 +272,35 @@ class WhatsAppAdapter(BasePlatformAdapter):
         if self._message_mentions_bot(data):
             return True
         return self._message_matches_mention_patterns(data)
-    
+
+    async def _check_bridge_health(self) -> tuple:
+        """Check bridge health, trying multiple host addresses (WSL2 workaround).
+
+        In WSL2, 127.0.0.1 may not route to the bridge. Try the WSL IP as fallback.
+
+        Returns (data_dict, base_url) on success, (None, None) on failure.
+        """
+        import aiohttp
+        wsl_ip = os.popen("hostname -I 2>/dev/null | awk '{print $1}'").read().strip()
+        candidates = [
+            f"http://127.0.0.1:{self._bridge_port}",
+            f"http://localhost:{self._bridge_port}",
+        ]
+        if wsl_ip:
+            candidates.append(f"http://{wsl_ip}:{self._bridge_port}")
+        for base in candidates:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"{base}/health",
+                        timeout=aiohttp.ClientTimeout(total=2),
+                    ) as resp:
+                        if resp.status == 200:
+                            return await resp.json(), base
+            except Exception:
+                continue
+        return None, None
+
     async def connect(self) -> bool:
         """
         Start the WhatsApp bridge.
@@ -320,28 +350,20 @@ class WhatsAppAdapter(BasePlatformAdapter):
             self._session_path.mkdir(parents=True, exist_ok=True)
             
             # Check if bridge is already running and connected
-            import aiohttp
-            import asyncio
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        f"http://127.0.0.1:{self._bridge_port}/health",
-                        timeout=aiohttp.ClientTimeout(total=2)
-                    ) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            bridge_status = data.get("status", "unknown")
-                            if bridge_status == "connected":
-                                print(f"[{self.name}] Using existing bridge (status: {bridge_status})")
-                                self._mark_connected()
-                                self._bridge_process = None  # Not managed by us
-                                self._http_session = aiohttp.ClientSession()
-                                self._poll_task = asyncio.create_task(self._poll_messages())
-                                return True
-                            else:
-                                print(f"[{self.name}] Bridge found but not connected (status: {bridge_status}), restarting")
-            except Exception:
-                pass  # Bridge not running, start a new one
+            health_data, working_base = await self._check_bridge_health()
+            if health_data is not None:
+                bridge_status = health_data.get("status", "unknown")
+                if bridge_status == "connected":
+                    print(f"[{self.name}] Using existing bridge (status: {bridge_status})")
+                    self._bridge_base = working_base
+                    self._mark_connected()
+                    self._bridge_process = None  # Not managed by us
+                    import aiohttp as _aiohttp
+                    self._http_session = _aiohttp.ClientSession()
+                    self._poll_task = asyncio.create_task(self._poll_messages())
+                    return True
+                else:
+                    print(f"[{self.name}] Bridge found but not connected (status: {bridge_status}), restarting")
             
             # Kill any orphaned bridge from a previous gateway run
             _kill_port_process(self._bridge_port)
@@ -389,20 +411,14 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     print(f"[{self.name}] Check log: {self._bridge_log}")
                     self._close_bridge_log()
                     return False
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(
-                            f"http://127.0.0.1:{self._bridge_port}/health",
-                            timeout=aiohttp.ClientTimeout(total=2)
-                        ) as resp:
-                            if resp.status == 200:
-                                http_ready = True
-                                data = await resp.json()
-                                if data.get("status") == "connected":
-                                    print(f"[{self.name}] Bridge ready (status: connected)")
-                                    break
-                except Exception:
-                    continue
+                health_data, working_base = await self._check_bridge_health()
+                if health_data is not None:
+                    http_ready = True
+                    self._bridge_base = working_base
+                    data = health_data
+                    if data.get("status") == "connected":
+                        print(f"[{self.name}] Bridge ready (status: connected)")
+                        break
 
             if not http_ready:
                 print(f"[{self.name}] Bridge HTTP server did not start in 15s")
@@ -421,19 +437,12 @@ class WhatsAppAdapter(BasePlatformAdapter):
                         print(f"[{self.name}] Check log: {self._bridge_log}")
                         self._close_bridge_log()
                         return False
-                    try:
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(
-                                f"http://127.0.0.1:{self._bridge_port}/health",
-                                timeout=aiohttp.ClientTimeout(total=2)
-                            ) as resp:
-                                if resp.status == 200:
-                                    data = await resp.json()
-                                    if data.get("status") == "connected":
-                                        print(f"[{self.name}] Bridge ready (status: connected)")
-                                        break
-                    except Exception:
-                        continue
+                    health_data, working_base = await self._check_bridge_health()
+                    if health_data is not None:
+                        self._bridge_base = working_base
+                        if health_data.get("status") == "connected":
+                            print(f"[{self.name}] Bridge ready (status: connected)")
+                            break
                 else:
                     # Still not connected — warn but proceed (bridge may
                     # auto-reconnect later, e.g. after a code 515 restart).
@@ -628,7 +637,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     payload["replyTo"] = reply_to
 
                 async with self._http_session.post(
-                    f"http://127.0.0.1:{self._bridge_port}/send",
+                    f"{self._bridge_base}/send",
                     json=payload,
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as resp:
@@ -665,7 +674,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
         try:
             import aiohttp
             async with self._http_session.post(
-                f"http://127.0.0.1:{self._bridge_port}/edit",
+                f"{self._bridge_base}/edit",
                 json={
                     "chatId": chat_id,
                     "messageId": message_id,
@@ -712,7 +721,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 payload["fileName"] = file_name
 
             async with self._http_session.post(
-                f"http://127.0.0.1:{self._bridge_port}/send-media",
+                f"{self._bridge_base}/send-media",
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=120),
             ) as resp:
@@ -792,7 +801,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
             import aiohttp
 
             await self._http_session.post(
-                f"http://127.0.0.1:{self._bridge_port}/typing",
+                f"{self._bridge_base}/typing",
                 json={"chatId": chat_id},
                 timeout=aiohttp.ClientTimeout(total=5)
             )
@@ -810,7 +819,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
             import aiohttp
 
             async with self._http_session.get(
-                f"http://127.0.0.1:{self._bridge_port}/chat/{chat_id}",
+                f"{self._bridge_base}/chat/{chat_id}",
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 if resp.status == 200:
@@ -838,7 +847,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 break
             try:
                 async with self._http_session.get(
-                    f"http://127.0.0.1:{self._bridge_port}/messages",
+                    f"{self._bridge_base}/messages",
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as resp:
                     if resp.status == 200:
