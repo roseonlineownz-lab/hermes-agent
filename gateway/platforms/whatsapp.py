@@ -66,6 +66,37 @@ def _kill_port_process(port: int) -> None:
     except Exception:
         pass
 
+
+def _terminate_bridge_process(proc, *, force: bool = False) -> None:
+    """Terminate the bridge process using process-tree semantics where possible."""
+    if _IS_WINDOWS:
+        cmd = ["taskkill", "/PID", str(proc.pid), "/T"]
+        if force:
+            cmd.append("/F")
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except FileNotFoundError:
+            if force:
+                proc.kill()
+            else:
+                proc.terminate()
+            return
+
+        if result.returncode != 0:
+            details = (result.stderr or result.stdout or "").strip()
+            raise OSError(details or f"taskkill failed for PID {proc.pid}")
+        return
+
+    import signal
+
+    sig = signal.SIGTERM if not force else signal.SIGKILL
+    os.killpg(os.getpgid(proc.pid), sig)
+
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -118,6 +149,10 @@ class WhatsAppAdapter(BasePlatformAdapter):
     - bridge_script: Path to the Node.js bridge script
     - bridge_port: Port for HTTP communication (default: 3000)
     - session_path: Path to store WhatsApp session data
+    - dm_policy: "open" | "allowlist" | "disabled" — how DMs are handled (default: "open")
+    - allow_from: List of sender IDs allowed in DMs (when dm_policy="allowlist")
+    - group_policy: "open" | "allowlist" | "disabled" — which groups are processed (default: "open")
+    - group_allow_from: List of group JIDs allowed (when group_policy="allowlist")
     """
     
     # WhatsApp message limits — practical UX limit, not protocol max.
@@ -130,9 +165,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.WHATSAPP)
         self._bridge_process: Optional[subprocess.Popen] = None
-        self._bridge_port: int = config.extra.get("bridge_port", int(os.environ.get("WHATSAPP_BRIDGE_PORT", "3300")))
-        wsl_ip = os.popen("hostname -I 2>/dev/null | awk '{print $1}'").read().strip()
-        self._bridge_base: str = f"http://{wsl_ip}:{self._bridge_port}" if wsl_ip else f"http://127.0.0.1:{self._bridge_port}"
+        self._bridge_port: int = config.extra.get("bridge_port", 3000)
         self._bridge_script: Optional[str] = config.extra.get(
             "bridge_script",
             str(self._DEFAULT_BRIDGE_DIR / "bridge.js"),
@@ -142,6 +175,10 @@ class WhatsAppAdapter(BasePlatformAdapter):
             get_hermes_dir("platforms/whatsapp/session", "whatsapp/session")
         ))
         self._reply_prefix: Optional[str] = config.extra.get("reply_prefix")
+        self._dm_policy = str(config.extra.get("dm_policy") or os.getenv("WHATSAPP_DM_POLICY", "open")).strip().lower()
+        self._allow_from = self._coerce_allow_list(config.extra.get("allow_from") or config.extra.get("allowFrom"))
+        self._group_policy = str(config.extra.get("group_policy") or os.getenv("WHATSAPP_GROUP_POLICY", "open")).strip().lower()
+        self._group_allow_from = self._coerce_allow_list(config.extra.get("group_allow_from") or config.extra.get("groupAllowFrom"))
         self._mention_patterns = self._compile_mention_patterns()
         self._message_queue: asyncio.Queue = asyncio.Queue()
         self._bridge_log_fh = None
@@ -164,6 +201,33 @@ class WhatsAppAdapter(BasePlatformAdapter):
         if isinstance(raw, list):
             return {str(part).strip() for part in raw if str(part).strip()}
         return {part.strip() for part in str(raw).split(",") if part.strip()}
+
+    @staticmethod
+    def _coerce_allow_list(raw) -> set[str]:
+        """Parse allow_from / group_allow_from from config or env var."""
+        if raw is None:
+            return set()
+        if isinstance(raw, list):
+            return {str(part).strip() for part in raw if str(part).strip()}
+        return {part.strip() for part in str(raw).split(",") if part.strip()}
+
+    def _is_dm_allowed(self, sender_id: str) -> bool:
+        """Check whether a DM from the given sender should be processed."""
+        if self._dm_policy == "disabled":
+            return False
+        if self._dm_policy == "allowlist":
+            return sender_id in self._allow_from
+        # "open" — all DMs allowed
+        return True
+
+    def _is_group_allowed(self, chat_id: str) -> bool:
+        """Check whether a group chat should be processed."""
+        if self._group_policy == "disabled":
+            return False
+        if self._group_policy == "allowlist":
+            return chat_id in self._group_allow_from
+        # "open" — all groups allowed
+        return True
 
     def _compile_mention_patterns(self):
         patterns = self.config.extra.get("mention_patterns")
@@ -257,8 +321,18 @@ class WhatsAppAdapter(BasePlatformAdapter):
         return cleaned.strip() or text
 
     def _should_process_message(self, data: Dict[str, Any]) -> bool:
-        if not data.get("isGroup"):
+        is_group = data.get("isGroup", False)
+        if is_group:
+            chat_id = str(data.get("chatId") or "")
+            if not self._is_group_allowed(chat_id):
+                return False
+        else:
+            sender_id = str(data.get("senderId") or data.get("from") or "")
+            if not self._is_dm_allowed(sender_id):
+                return False
+            # DMs that pass the policy gate are always processed
             return True
+        # Group messages: check mention / free-response settings
         chat_id = str(data.get("chatId") or "")
         if chat_id in self._whatsapp_free_response_chats():
             return True
@@ -272,35 +346,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
         if self._message_mentions_bot(data):
             return True
         return self._message_matches_mention_patterns(data)
-
-    async def _check_bridge_health(self) -> tuple:
-        """Check bridge health, trying multiple host addresses (WSL2 workaround).
-
-        In WSL2, 127.0.0.1 may not route to the bridge. Try the WSL IP as fallback.
-
-        Returns (data_dict, base_url) on success, (None, None) on failure.
-        """
-        import aiohttp
-        wsl_ip = os.popen("hostname -I 2>/dev/null | awk '{print $1}'").read().strip()
-        candidates = [
-            f"http://127.0.0.1:{self._bridge_port}",
-            f"http://localhost:{self._bridge_port}",
-        ]
-        if wsl_ip:
-            candidates.append(f"http://{wsl_ip}:{self._bridge_port}")
-        for base in candidates:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        f"{base}/health",
-                        timeout=aiohttp.ClientTimeout(total=2),
-                    ) as resp:
-                        if resp.status == 200:
-                            return await resp.json(), base
-            except Exception:
-                continue
-        return None, None
-
+    
     async def connect(self) -> bool:
         """
         Start the WhatsApp bridge.
@@ -319,51 +365,60 @@ class WhatsAppAdapter(BasePlatformAdapter):
         logger.info("[%s] Bridge found at %s", self.name, bridge_path)
         
         # Acquire scoped lock to prevent duplicate sessions
+        lock_acquired = False
         try:
             if not self._acquire_platform_lock('whatsapp-session', str(self._session_path), 'WhatsApp session'):
                 return False
+            lock_acquired = True
         except Exception as e:
             logger.warning("[%s] Could not acquire session lock (non-fatal): %s", self.name, e)
 
-        # Auto-install npm dependencies if node_modules doesn't exist
-        bridge_dir = bridge_path.parent
-        if not (bridge_dir / "node_modules").exists():
-            print(f"[{self.name}] Installing WhatsApp bridge dependencies...")
-            try:
-                install_result = subprocess.run(
-                    ["npm", "install", "--silent"],
-                    cwd=str(bridge_dir),
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
-                if install_result.returncode != 0:
-                    print(f"[{self.name}] npm install failed: {install_result.stderr}")
-                    return False
-                print(f"[{self.name}] Dependencies installed")
-            except Exception as e:
-                print(f"[{self.name}] Failed to install dependencies: {e}")
-                return False
-        
         try:
+            # Auto-install npm dependencies if node_modules doesn't exist
+            bridge_dir = bridge_path.parent
+            if not (bridge_dir / "node_modules").exists():
+                print(f"[{self.name}] Installing WhatsApp bridge dependencies...")
+                try:
+                    install_result = subprocess.run(
+                        ["npm", "install", "--silent"],
+                        cwd=str(bridge_dir),
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                    if install_result.returncode != 0:
+                        print(f"[{self.name}] npm install failed: {install_result.stderr}")
+                        return False
+                    print(f"[{self.name}] Dependencies installed")
+                except Exception as e:
+                    print(f"[{self.name}] Failed to install dependencies: {e}")
+                    return False
+
             # Ensure session directory exists
             self._session_path.mkdir(parents=True, exist_ok=True)
             
             # Check if bridge is already running and connected
-            health_data, working_base = await self._check_bridge_health()
-            if health_data is not None:
-                bridge_status = health_data.get("status", "unknown")
-                if bridge_status == "connected":
-                    print(f"[{self.name}] Using existing bridge (status: {bridge_status})")
-                    self._bridge_base = working_base
-                    self._mark_connected()
-                    self._bridge_process = None  # Not managed by us
-                    import aiohttp as _aiohttp
-                    self._http_session = _aiohttp.ClientSession()
-                    self._poll_task = asyncio.create_task(self._poll_messages())
-                    return True
-                else:
-                    print(f"[{self.name}] Bridge found but not connected (status: {bridge_status}), restarting")
+            import aiohttp
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"http://127.0.0.1:{self._bridge_port}/health",
+                        timeout=aiohttp.ClientTimeout(total=2)
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            bridge_status = data.get("status", "unknown")
+                            if bridge_status == "connected":
+                                print(f"[{self.name}] Using existing bridge (status: {bridge_status})")
+                                self._mark_connected()
+                                self._bridge_process = None  # Not managed by us
+                                self._http_session = aiohttp.ClientSession()
+                                self._poll_task = asyncio.create_task(self._poll_messages())
+                                return True
+                            else:
+                                print(f"[{self.name}] Bridge found but not connected (status: {bridge_status}), restarting")
+            except Exception:
+                pass  # Bridge not running, start a new one
             
             # Kill any orphaned bridge from a previous gateway run
             _kill_port_process(self._bridge_port)
@@ -411,14 +466,20 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     print(f"[{self.name}] Check log: {self._bridge_log}")
                     self._close_bridge_log()
                     return False
-                health_data, working_base = await self._check_bridge_health()
-                if health_data is not None:
-                    http_ready = True
-                    self._bridge_base = working_base
-                    data = health_data
-                    if data.get("status") == "connected":
-                        print(f"[{self.name}] Bridge ready (status: connected)")
-                        break
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            f"http://127.0.0.1:{self._bridge_port}/health",
+                            timeout=aiohttp.ClientTimeout(total=2)
+                        ) as resp:
+                            if resp.status == 200:
+                                http_ready = True
+                                data = await resp.json()
+                                if data.get("status") == "connected":
+                                    print(f"[{self.name}] Bridge ready (status: connected)")
+                                    break
+                except Exception:
+                    continue
 
             if not http_ready:
                 print(f"[{self.name}] Bridge HTTP server did not start in 15s")
@@ -437,12 +498,19 @@ class WhatsAppAdapter(BasePlatformAdapter):
                         print(f"[{self.name}] Check log: {self._bridge_log}")
                         self._close_bridge_log()
                         return False
-                    health_data, working_base = await self._check_bridge_health()
-                    if health_data is not None:
-                        self._bridge_base = working_base
-                        if health_data.get("status") == "connected":
-                            print(f"[{self.name}] Bridge ready (status: connected)")
-                            break
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(
+                                f"http://127.0.0.1:{self._bridge_port}/health",
+                                timeout=aiohttp.ClientTimeout(total=2)
+                            ) as resp:
+                                if resp.status == 200:
+                                    data = await resp.json()
+                                    if data.get("status") == "connected":
+                                        print(f"[{self.name}] Bridge ready (status: connected)")
+                                        break
+                    except Exception:
+                        continue
                 else:
                     # Still not connected — warn but proceed (bridge may
                     # auto-reconnect later, e.g. after a code 515 restart).
@@ -461,10 +529,13 @@ class WhatsAppAdapter(BasePlatformAdapter):
             return True
             
         except Exception as e:
-            self._release_platform_lock()
             logger.error("[%s] Failed to start bridge: %s", self.name, e, exc_info=True)
-            self._close_bridge_log()
             return False
+        finally:
+            if not self._running:
+                if lock_acquired:
+                    self._release_platform_lock()
+                self._close_bridge_log()
     
     def _close_bridge_log(self) -> None:
         """Close the bridge log file handle if open."""
@@ -496,22 +567,14 @@ class WhatsAppAdapter(BasePlatformAdapter):
         """Stop the WhatsApp bridge and clean up any orphaned processes."""
         if self._bridge_process:
             try:
-                # Kill the entire process group so child node processes die too
-                import signal
                 try:
-                    if _IS_WINDOWS:
-                        self._bridge_process.terminate()
-                    else:
-                        os.killpg(os.getpgid(self._bridge_process.pid), signal.SIGTERM)
+                    _terminate_bridge_process(self._bridge_process, force=False)
                 except (ProcessLookupError, PermissionError):
                     self._bridge_process.terminate()
                 await asyncio.sleep(1)
                 if self._bridge_process.poll() is None:
                     try:
-                        if _IS_WINDOWS:
-                            self._bridge_process.kill()
-                        else:
-                            os.killpg(os.getpgid(self._bridge_process.pid), signal.SIGKILL)
+                        _terminate_bridge_process(self._bridge_process, force=True)
                     except (ProcessLookupError, PermissionError):
                         self._bridge_process.kill()
             except Exception as e:
@@ -637,7 +700,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
                     payload["replyTo"] = reply_to
 
                 async with self._http_session.post(
-                    f"{self._bridge_base}/send",
+                    f"http://127.0.0.1:{self._bridge_port}/send",
                     json=payload,
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as resp:
@@ -664,6 +727,8 @@ class WhatsAppAdapter(BasePlatformAdapter):
         chat_id: str,
         message_id: str,
         content: str,
+        *,
+        finalize: bool = False,
     ) -> SendResult:
         """Edit a previously sent message via the WhatsApp bridge."""
         if not self._running or not self._http_session:
@@ -674,7 +739,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
         try:
             import aiohttp
             async with self._http_session.post(
-                f"{self._bridge_base}/edit",
+                f"http://127.0.0.1:{self._bridge_port}/edit",
                 json={
                     "chatId": chat_id,
                     "messageId": message_id,
@@ -721,7 +786,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 payload["fileName"] = file_name
 
             async with self._http_session.post(
-                f"{self._bridge_base}/send-media",
+                f"http://127.0.0.1:{self._bridge_port}/send-media",
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=120),
             ) as resp:
@@ -775,6 +840,17 @@ class WhatsAppAdapter(BasePlatformAdapter):
         """Send a video natively via bridge — plays inline in WhatsApp."""
         return await self._send_media_to_bridge(chat_id, video_path, "video", caption)
 
+    async def send_voice(
+        self,
+        chat_id: str,
+        audio_path: str,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        **kwargs,
+    ) -> SendResult:
+        """Send an audio file as a WhatsApp voice message via bridge."""
+        return await self._send_media_to_bridge(chat_id, audio_path, "audio", caption)
+
     async def send_document(
         self,
         chat_id: str,
@@ -801,7 +877,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
             import aiohttp
 
             await self._http_session.post(
-                f"{self._bridge_base}/typing",
+                f"http://127.0.0.1:{self._bridge_port}/typing",
                 json={"chatId": chat_id},
                 timeout=aiohttp.ClientTimeout(total=5)
             )
@@ -819,7 +895,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
             import aiohttp
 
             async with self._http_session.get(
-                f"{self._bridge_base}/chat/{chat_id}",
+                f"http://127.0.0.1:{self._bridge_port}/chat/{chat_id}",
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 if resp.status == 200:
@@ -847,7 +923,7 @@ class WhatsAppAdapter(BasePlatformAdapter):
                 break
             try:
                 async with self._http_session.get(
-                    f"{self._bridge_base}/messages",
+                    f"http://127.0.0.1:{self._bridge_port}/messages",
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as resp:
                     if resp.status == 200:
