@@ -350,9 +350,13 @@ class WhatsAppAdapter(BasePlatformAdapter):
     async def connect(self) -> bool:
         """
         Start the WhatsApp bridge.
-        
+
         This launches the Node.js bridge process and waits for it to be ready.
         """
+        if os.getenv("WHATSAPP_ENABLED", "").lower() not in ("true", "1", "yes"):
+            logger.info("[%s] WhatsApp hard-disabled (WHATSAPP_ENABLED=%s), skipping", self.name, os.getenv("WHATSAPP_ENABLED", ""))
+            return False
+
         if not check_whatsapp_requirements():
             logger.warning("[%s] Node.js not found. WhatsApp requires Node.js.", self.name)
             return False
