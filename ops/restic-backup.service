@@ -1,0 +1,9 @@
+[Unit]
+Description=Hermes VPS offsite backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/restic/restic-backup.env
+ExecStart=/usr/local/bin/restic-backup.sh
