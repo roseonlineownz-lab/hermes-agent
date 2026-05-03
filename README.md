@@ -178,3 +178,15 @@ scripts/run_tests.sh
 MIT — see [LICENSE](LICENSE).
 
 Built by [Nous Research](https://nousresearch.com).
+
+---
+
+## VPS Ops Bundle
+
+If you want the concrete rollout package for the VPS baseline we discussed,
+see:
+
+- [ops/README.md](ops/README.md)
+- [ops/vps-hardening-plan.md](ops/vps-hardening-plan.md)
+- [ops/docker-compose.uptime-kuma.yml](ops/docker-compose.uptime-kuma.yml)
+- [ops/restic-backup.sh](ops/restic-backup.sh)
