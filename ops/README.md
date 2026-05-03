@@ -16,6 +16,8 @@ selected:
 - `crowdsec-setup.sh` - CrowdSec bootstrap helper
 - `deploy-uptime-kuma.sh` - start Uptime Kuma from the ops bundle
 - `install-restic-service.sh` - install the backup timer and unit files
+- `proxy-hardening.md` - reverse proxy hardening notes
+- `restore-test.sh` - restore-test helper and manual recovery prompt
 - `restic-backup.service` / `restic-backup.timer` - daily backup scheduling
 - `restic-backup.env.example` - example environment file for restic
 
