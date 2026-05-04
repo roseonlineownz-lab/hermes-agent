@@ -4842,14 +4842,49 @@ def _(rid, params: dict) -> dict:
                 "meta": "Control agent detail visibility",
             },
             {
+                "text": "/fortune",
+                "display": "/fortune",
+                "meta": "Show a random fortune",
+            },
+            {
+                "text": "/heapdump",
+                "display": "/heapdump",
+                "meta": "Dump V8 heap snapshot for debugging",
+            },
+            {
                 "text": "/logs",
                 "display": "/logs",
                 "meta": "Show recent gateway log lines",
             },
             {
+                "text": "/mem",
+                "display": "/mem",
+                "meta": "Show memory usage summary",
+            },
+            {
                 "text": "/mouse",
                 "display": "/mouse",
                 "meta": "Toggle mouse/wheel tracking [on|off|toggle]",
+            },
+            {
+                "text": "/replay",
+                "display": "/replay",
+                "meta": "Replay current session from start",
+            },
+            {
+                "text": "/replay-diff",
+                "display": "/replay-diff",
+                "meta": "Replay session showing diffs",
+            },
+            {
+                "text": "/setup",
+                "display": "/setup",
+                "meta": "Run interactive setup wizard",
+            },
+            {
+                "text": "/terminal-setup",
+                "display": "/terminal-setup",
+                "meta": "Configure terminal capabilities",
             },
         ]
         for extra in extras:
