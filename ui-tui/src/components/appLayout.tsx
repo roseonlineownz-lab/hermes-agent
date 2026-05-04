@@ -161,6 +161,12 @@ const ComposerPane = memo(function ComposerPane({
   const inputColumns = stableComposerColumns(composer.cols, promptWidth)
   const inputHeight = inputVisualHeight(composer.input, inputColumns)
   const inputMouseRef = useRef<null | TextInputMouseApi>(null)
+  const busyPlaceholder =
+    ui.busyInputMode === 'queue'
+      ? 'Enter queues next message · Ctrl+C interrupt'
+      : ui.busyInputMode === 'steer'
+        ? 'Enter steers current run · Ctrl+C interrupt'
+        : 'Enter interrupts current run · /queue to wait'
 
   const captureInputDrag = (e: GutterMouseEvent) => {
     if (e.button !== 0) {
@@ -286,7 +292,7 @@ const ComposerPane = memo(function ComposerPane({
                   onChange={composer.updateInput}
                   onPaste={composer.handleTextPaste}
                   onSubmit={composer.submit}
-                  placeholder={composer.empty ? PLACEHOLDER : ui.busy ? 'Ctrl+C to interrupt…' : ''}
+                  placeholder={composer.empty ? PLACEHOLDER : ui.busy ? busyPlaceholder : ''}
                   value={composer.input}
                 />
               </Box>
