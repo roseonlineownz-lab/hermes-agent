@@ -294,6 +294,7 @@ const ComposerPane = memo(function ComposerPane({
                   onSubmit={composer.submit}
                   placeholder={composer.empty ? PLACEHOLDER : ui.busy ? busyPlaceholder : ''}
                   value={composer.input}
+                  voiceRecordKey={composer.voiceRecordKey}
                 />
               </Box>
 
