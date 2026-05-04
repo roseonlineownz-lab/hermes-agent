@@ -1,4 +1,4 @@
-import { Box, type ScrollBoxHandle, Text } from '@hermes/ink'
+import { Box, forceRedraw, type ScrollBoxHandle, Text } from '@hermes/ink'
 import { useStore } from '@nanostores/react'
 import { type ReactNode, type RefObject, useEffect, useMemo, useState } from 'react'
 import unicodeSpinners from 'unicode-animations'
@@ -84,11 +84,23 @@ function FaceTicker({ color, startedAt }: { color: string; startedAt?: null | nu
   const { intervalMs, showVerb } = renderIndicator(style, 0)
 
   useEffect(() => {
-    const glyph = setInterval(() => setTick(n => n + 1), intervalMs)
-    const clock = setInterval(() => setNow(Date.now()), 1000)
+    const redraw = () => forceRedraw()
+    const glyph = setInterval(() => {
+      setTick(n => n + 1)
+      redraw()
+    }, intervalMs)
+    const clock = setInterval(() => {
+      setNow(Date.now())
+      redraw()
+    }, 1000)
     // Verb timer is gated on `showVerb` — `unicode` style hides the verb
     // entirely, so cycling `verbTick` would be an avoidable re-render.
-    const verb = showVerb ? setInterval(() => setVerbTick(n => n + 1), FACE_TICK_MS) : null
+    const verb = showVerb
+      ? setInterval(() => {
+          setVerbTick(n => n + 1)
+          redraw()
+        }, FACE_TICK_MS)
+      : null
 
     return () => {
       clearInterval(glyph)
