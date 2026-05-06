@@ -206,9 +206,13 @@ def check_for_updates() -> Optional[int]:
     if embedded_rev:
         behind = _check_via_rev(embedded_rev)
     else:
-        repo_dir = hermes_home / "hermes-agent"
-        if not (repo_dir / ".git").exists():
-            repo_dir = Path(__file__).parent.parent.resolve()
+        package_repo = Path(__file__).parent.parent.resolve()
+        home_repo = hermes_home / "hermes-agent"
+        # Prefer the checkout that Python actually imported. Some WSL/NovaMaster
+        # installs keep a stale mirror under ~/.hermes/hermes-agent while the
+        # executable imports from /home/faramix/hermes-agent; checking the mirror
+        # reports false "commits behind" banners after a successful update.
+        repo_dir = package_repo if (package_repo / ".git").exists() else home_repo
         if not (repo_dir / ".git").exists():
             return None
         behind = _check_via_local_git(repo_dir)
