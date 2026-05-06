@@ -6537,6 +6537,8 @@ class HermesCLI:
                 self._handle_skills_command(cmd_original)
         elif canonical == "platforms":
             self._show_gateway_status()
+        elif canonical == "buddy":
+            self._handle_buddy_command(cmd_original)
         elif canonical == "status":
             self._show_session_status()
         elif canonical == "statusbar":
@@ -6766,7 +6768,78 @@ class HermesCLI:
                     _cprint(f"{_DIM}{_ACCENT}Type /help for available commands{_RST}")
         
         return True
-    
+
+    def _handle_buddy_command(self, cmd: str):
+        """Handle /buddy [topic] — recommend context-aware next commands."""
+        try:
+            from hermes_cli.command_buddy import BuddyState, recommend_cli_commands
+        except Exception as exc:
+            _cprint(f"  Buddy unavailable: {exc}")
+            return
+
+        parts = (cmd or "").strip().split(None, 1)
+        topic = parts[1].strip() if len(parts) > 1 else None
+
+        pending_count = 0
+        try:
+            pending = getattr(self, "_pending_input", None)
+            if pending is not None and hasattr(pending, "qsize"):
+                pending_count = int(pending.qsize())
+        except Exception:
+            pending_count = 0
+
+        background_count = 0
+        try:
+            background_tasks = getattr(self, "_background_tasks", None) or {}
+            background_count = len(background_tasks)
+        except Exception:
+            background_count = 0
+
+        goal_active = False
+        try:
+            goal_manager = getattr(self, "_goal_manager", None)
+            if goal_manager is not None and hasattr(goal_manager, "is_active"):
+                goal_active = bool(goal_manager.is_active())
+        except Exception:
+            goal_active = False
+
+        session_tokens = 0
+        try:
+            agent = getattr(self, "agent", None)
+            session_tokens = int(getattr(agent, "session_total_tokens", 0) or 0)
+        except Exception:
+            session_tokens = 0
+
+        display_cfg = {}
+        try:
+            display_cfg = (getattr(self, "config", {}) or {}).get("display", {}) or {}
+        except Exception:
+            display_cfg = {}
+
+        state = BuddyState(
+            agent_running=bool(getattr(self, "_agent_running", False)),
+            busy_input_mode=str(getattr(self, "busy_input_mode", "interrupt") or "interrupt"),
+            goal_active=goal_active,
+            pending_count=pending_count,
+            background_count=background_count,
+            session_tokens=session_tokens,
+            tool_progress=str(display_cfg.get("tool_progress", "") or ""),
+            yolo_enabled=bool(getattr(self, "yolo_mode", False)),
+        )
+
+        recommendations = recommend_cli_commands(state, topic=topic)
+        title = "Hermes Buddy"
+        if topic:
+            title = f"{title} ({topic})"
+        _cprint(f"  {title}:")
+
+        if not recommendations:
+            _cprint("    No matching recommendations. Try: /buddy busy, /buddy context, /buddy tools")
+            return
+
+        for rec in recommendations:
+            _cprint(f"    {rec.command:<28} {rec.reason}")
+
     def _handle_background_command(self, cmd: str):
         """Handle /background <prompt> — run a prompt in a separate background session.
 
