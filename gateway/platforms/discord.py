@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 VALID_THREAD_AUTO_ARCHIVE_MINUTES = {60, 1440, 4320, 10080}
 _DISCORD_COMMAND_SYNC_POLICIES = {"safe", "bulk", "off"}
 
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
 try:
     import discord
     from discord import Message as DiscordMessage, Intents
@@ -594,7 +601,7 @@ class DiscordAdapter(BasePlatformAdapter):
             # bot from coming online at all, so avoid requesting members intent
             # unless it is actually necessary.
             intents = Intents.default()
-            intents.message_content = True
+            intents.message_content = _env_bool("DISCORD_MESSAGE_CONTENT_INTENT", True)
             intents.dm_messages = True
             intents.guild_messages = True
             intents.members = (
