@@ -961,9 +961,19 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
     # otherwise.
     if "consecutive_failures" not in cols:
         if "spawn_failures" in cols:
-            conn.execute(
-                "ALTER TABLE tasks RENAME COLUMN spawn_failures TO consecutive_failures"
-            )
+            # Concurrent startup paths can attempt this rename at the same time.
+            # If another process wins the race first, refresh schema and continue.
+            try:
+                conn.execute(
+                    "ALTER TABLE tasks RENAME COLUMN spawn_failures TO consecutive_failures"
+                )
+            except sqlite3.OperationalError as exc:
+                msg = str(exc).lower()
+                if "no such column" not in msg:
+                    raise
+                cols = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+                if "consecutive_failures" not in cols:
+                    raise
         else:
             conn.execute(
                 "ALTER TABLE tasks ADD COLUMN consecutive_failures "
@@ -973,9 +983,17 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE tasks ADD COLUMN worker_pid INTEGER")
     if "last_failure_error" not in cols:
         if "last_spawn_error" in cols:
-            conn.execute(
-                "ALTER TABLE tasks RENAME COLUMN last_spawn_error TO last_failure_error"
-            )
+            try:
+                conn.execute(
+                    "ALTER TABLE tasks RENAME COLUMN last_spawn_error TO last_failure_error"
+                )
+            except sqlite3.OperationalError as exc:
+                msg = str(exc).lower()
+                if "no such column" not in msg:
+                    raise
+                cols = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+                if "last_failure_error" not in cols:
+                    raise
         else:
             conn.execute("ALTER TABLE tasks ADD COLUMN last_failure_error TEXT")
     if "max_runtime_seconds" not in cols:
