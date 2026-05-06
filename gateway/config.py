@@ -46,6 +46,20 @@ def _coerce_float(value: Any, default: float) -> float:
         return default
 
 
+def _coerce_optional_bool(value: Any) -> Optional[bool]:
+    """Coerce optional bool-ish values; return ``None`` when value is absent."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in ("true", "1", "yes", "on"):
+            return True
+        if lowered in ("false", "0", "no", "off"):
+            return False
+        return None
+    return is_truthy_value(value, default=None)
+
+
 def _coerce_int(value: Any, default: int) -> int:
     """Coerce integer config values, falling back on malformed input."""
     if value is None:
@@ -1064,12 +1078,41 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
     """Apply environment variable overrides to config."""
     
     # Telegram
+    telegram_enabled_override = _coerce_optional_bool(
+        os.getenv("TELEGRAM_ENABLED")
+        or os.getenv("HERMES_TELEGRAM_ENABLED")
+    )
     telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    telegram_cfg = config.platforms.get(Platform.TELEGRAM)
     if telegram_token:
-        if Platform.TELEGRAM not in config.platforms:
-            config.platforms[Platform.TELEGRAM] = PlatformConfig()
-        config.platforms[Platform.TELEGRAM].enabled = True
-        config.platforms[Platform.TELEGRAM].token = telegram_token
+        if telegram_cfg is None:
+            telegram_cfg = PlatformConfig()
+            config.platforms[Platform.TELEGRAM] = telegram_cfg
+        # Env token + explicit/implicit enable = on.
+        telegram_cfg.enabled = True if telegram_enabled_override is not False else False
+        telegram_cfg.token = telegram_token
+    elif telegram_cfg is not None:
+        telegram_disable_env = _coerce_optional_bool(
+            os.getenv("TELEGRAM_DISABLE") or os.getenv("HERMES_TELEGRAM_DISABLE")
+        )
+        if telegram_disable_env is True:
+            telegram_cfg.enabled = False
+        elif telegram_enabled_override is False:
+            telegram_cfg.enabled = False
+        elif telegram_enabled_override is True:
+            telegram_cfg.enabled = True
+        elif not telegram_cfg.token:
+            # Avoid accidental startup on stale/missing token when no explicit override
+            # is present.
+            telegram_cfg.enabled = False
+
+    else:
+        # Keep Telegram config absent when it is disabled everywhere.
+        # This avoids accidental activation from empty runtime state files.
+        if telegram_enabled_override is False or _coerce_optional_bool(
+            os.getenv("TELEGRAM_DISABLE") or os.getenv("HERMES_TELEGRAM_DISABLE")
+        ) is True:
+            config.platforms.pop(Platform.TELEGRAM, None)
     
     # Reply threading mode for Telegram (off/first/all)
     telegram_reply_mode = os.getenv("TELEGRAM_REPLY_TO_MODE", "").lower()

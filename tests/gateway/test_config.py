@@ -530,6 +530,45 @@ class TestLoadGatewayConfig:
         assert os.environ.get("TELEGRAM_PROXY") == "socks5://from-env:1080"
 
 
+class TestTelegramEnvOverrides:
+    def test_env_token_enables_telegram_by_default(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "env-token")
+        monkeypatch.delenv("TELEGRAM_ENABLED", raising=False)
+        monkeypatch.delenv("HERMES_TELEGRAM_ENABLED", raising=False)
+
+        config = GatewayConfig()
+        _apply_env_overrides(config)
+
+        telegram = config.platforms[Platform.TELEGRAM]
+        assert telegram.enabled is True
+        assert telegram.token == "env-token"
+
+    def test_explicit_false_keeps_env_token_disabled(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "env-token")
+        monkeypatch.setenv("HERMES_TELEGRAM_ENABLED", "false")
+
+        config = GatewayConfig()
+        _apply_env_overrides(config)
+
+        telegram = config.platforms[Platform.TELEGRAM]
+        assert telegram.enabled is False
+        assert telegram.token == "env-token"
+
+    def test_missing_token_disables_stale_telegram_config(self, monkeypatch):
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+        monkeypatch.delenv("TELEGRAM_ENABLED", raising=False)
+        monkeypatch.delenv("HERMES_TELEGRAM_ENABLED", raising=False)
+        monkeypatch.delenv("TELEGRAM_DISABLE", raising=False)
+        monkeypatch.delenv("HERMES_TELEGRAM_DISABLE", raising=False)
+
+        config = GatewayConfig(
+            platforms={Platform.TELEGRAM: PlatformConfig(enabled=True)}
+        )
+        _apply_env_overrides(config)
+
+        assert config.platforms[Platform.TELEGRAM].enabled is False
+
+
 class TestHomeChannelEnvOverrides:
     """Home channel env vars should apply even when the platform was already
     configured via config.yaml (not just when credential env vars create it)."""
