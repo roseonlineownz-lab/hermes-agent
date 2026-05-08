@@ -2169,6 +2169,80 @@ class GatewayRunner:
             if agent is not _AGENT_PENDING_SENTINEL
         }
 
+    def _build_shutdown_notification(
+        self,
+        *,
+        action: str,
+        session_key: Optional[str] = None,
+        source: Optional[Any] = None,
+        entry: Optional[Any] = None,
+        active_session_count: Optional[int] = None,
+    ) -> str:
+        """Format a richer shutdown/restart notice for chat delivery.
+
+        The message stays text-only so it works across Discord, Telegram, and
+        the other adapters, but it exposes enough state to make the restart
+        event actionable in chat.
+        """
+        details: list[str] = []
+
+        if session_key:
+            details.append(f"session_key: {session_key}")
+
+        if entry is not None:
+            session_id = getattr(entry, "session_id", None)
+            if session_id:
+                details.append(f"session_id: {session_id}")
+
+            display_name = getattr(entry, "display_name", None)
+            if display_name:
+                details.append(f"display_name: {display_name}")
+
+            chat_type = getattr(entry, "chat_type", None)
+            if chat_type:
+                details.append(f"chat_type: {chat_type}")
+
+            resume_pending = getattr(entry, "resume_pending", None)
+            if resume_pending is not None:
+                details.append(f"resume_pending: {'yes' if resume_pending else 'no'}")
+
+            resume_reason = getattr(entry, "resume_reason", None)
+            if resume_reason:
+                details.append(f"resume_reason: {resume_reason}")
+
+        if source is not None:
+            platform = getattr(getattr(source, "platform", None), "value", None)
+            if platform is None:
+                platform = getattr(source, "platform", None)
+            chat_id = getattr(source, "chat_id", None)
+            thread_id = getattr(source, "thread_id", None)
+            if platform and chat_id:
+                origin = f"{platform}:{chat_id}"
+                if thread_id:
+                    origin = f"{origin}:{thread_id}"
+                details.append(f"origin: {origin}")
+
+            user_name = getattr(source, "user_name", None)
+            if user_name:
+                details.append(f"user: {user_name}")
+
+        if active_session_count is not None:
+            details.append(f"active_sessions: {active_session_count}")
+
+        if self._restart_requested:
+            details.append("recovery: send any message after restart to continue")
+        else:
+            details.append("recovery: task will pause until the gateway is back")
+
+        details.append("note: best-effort; stuck work can still escalate")
+
+        return (
+            f"⚠️ Gateway {action}\n"
+            "```text\n"
+            + "\n".join(details)
+            + "\n```"
+        )
+
     def _queue_or_replace_pending_event(self, session_key: str, event: MessageEvent) -> None:
         adapter = self.adapters.get(event.source.platform)
         if not adapter:
@@ -2407,18 +2481,10 @@ class GatewayRunner:
         """
         active = self._snapshot_running_agents()
 
-        action = "restarting" if self._restart_requested else "shutting down"
-        hint = (
-            "Your current task will be interrupted. "
-            "Send any message after restart and I'll try to resume where you left off."
-            if self._restart_requested
-            else "Your current task will be interrupted."
-        )
-        msg = f"⚠️ Gateway {action} — {hint}"
-
         notified: set[tuple[str, str, Optional[str]]] = set()
         for session_key in active:
             source = None
+            entry = None
             try:
                 if getattr(self, "session_store", None) is not None:
                     self.session_store._ensure_loaded()
@@ -2462,6 +2528,12 @@ class GatewayRunner:
                 # correct forum topic / thread.
                 metadata = {"thread_id": thread_id} if thread_id else None
 
+                msg = self._build_shutdown_notification(
+                    action="restarting" if self._restart_requested else "shutting down",
+                    session_key=session_key,
+                    source=source,
+                    entry=entry,
+                )
                 result = await adapter.send(chat_id, msg, metadata=metadata)
                 if result is not None and getattr(result, "success", True) is False:
                     logger.debug(
@@ -2494,10 +2566,14 @@ class GatewayRunner:
 
             try:
                 metadata = {"thread_id": home.thread_id} if home.thread_id else None
+                home_msg = self._build_shutdown_notification(
+                    action="restarting" if self._restart_requested else "shutting down",
+                    active_session_count=len(active),
+                )
                 if metadata:
-                    result = await adapter.send(str(home.chat_id), msg, metadata=metadata)
+                    result = await adapter.send(str(home.chat_id), home_msg, metadata=metadata)
                 else:
-                    result = await adapter.send(str(home.chat_id), msg)
+                    result = await adapter.send(str(home.chat_id), home_msg)
                 if result is not None and getattr(result, "success", True) is False:
                     logger.debug(
                         "Failed to send shutdown notification to home channel %s:%s: %s",

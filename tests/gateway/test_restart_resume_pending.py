@@ -928,8 +928,9 @@ async def test_restart_banner_uses_try_to_resume_wording():
 
     assert len(adapter.sent) == 1
     msg = adapter.sent[0]
-    assert "restarting" in msg
-    assert "try to resume" in msg
+    assert msg.startswith("⚠️ Gateway restarting")
+    assert "recovery: send any message after restart to continue" in msg
+    assert "note: best-effort; stuck work can still escalate" in msg
 
 
 @pytest.mark.asyncio
@@ -944,10 +945,11 @@ async def test_restart_notifies_home_channel_even_without_active_sessions():
 
     await runner._notify_active_sessions_of_shutdown()
 
-    assert adapter.sent == [
-        "⚠️ Gateway restarting — Your current task will be interrupted. "
-        "Send any message after restart and I'll try to resume where you left off."
-    ]
+    assert len(adapter.sent) == 1
+    home_msg = adapter.sent[0]
+    assert home_msg.startswith("⚠️ Gateway restarting")
+    assert "active_sessions: 0" in home_msg
+    assert "recovery: send any message after restart to continue" in home_msg
 
 
 @pytest.mark.asyncio

@@ -191,12 +191,12 @@ async def test_shutdown_notification_sent_to_active_sessions():
 
     assert len(adapter.sent) == 1
     assert "shutting down" in adapter.sent[0]
-    assert "interrupted" in adapter.sent[0]
+    assert "recovery: task will pause until the gateway is back" in adapter.sent[0]
 
 
 @pytest.mark.asyncio
 async def test_shutdown_notification_says_restarting_when_restart_requested():
-    """When _restart_requested is True, the message says 'restarting' and mentions /retry."""
+    """When _restart_requested is True, the shutdown banner stays rich and actionable."""
     runner, adapter = make_restart_runner()
     runner._restart_requested = True
     session_key = "agent:main:telegram:dm:999"
@@ -205,8 +205,11 @@ async def test_shutdown_notification_says_restarting_when_restart_requested():
     await runner._notify_active_sessions_of_shutdown()
 
     assert len(adapter.sent) == 1
-    assert "restarting" in adapter.sent[0]
-    assert "resume" in adapter.sent[0]
+    msg = adapter.sent[0]
+    assert msg.startswith("⚠️ Gateway restarting")
+    assert "session_key: agent:main:telegram:dm:999" in msg
+    assert "recovery: send any message after restart to continue" in msg
+    assert "note: best-effort; stuck work can still escalate" in msg
 
 
 @pytest.mark.asyncio
