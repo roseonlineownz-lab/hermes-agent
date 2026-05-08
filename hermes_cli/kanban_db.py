@@ -1031,7 +1031,12 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
         # config, then ``DEFAULT_FAILURE_LIMIT``. Existing rows get NULL,
         # which is the correct default (they keep the global behaviour
         # they were getting before the column existed).
-        conn.execute("ALTER TABLE tasks ADD COLUMN max_retries INTEGER")
+        # Guard against duplicate column from concurrent init_db() calls.
+        try:
+            conn.execute("ALTER TABLE tasks ADD COLUMN max_retries INTEGER")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e):
+                raise
 
     # task_events gained a run_id column; back-fill it as NULL for
     # historical events (they predate runs and can't be attributed).
