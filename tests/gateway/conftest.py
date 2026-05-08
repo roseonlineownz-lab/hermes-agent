@@ -34,6 +34,7 @@ incident.
 import ast
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -111,14 +112,22 @@ def _ensure_discord_mock() -> None:
     discord_mod.Interaction = object
     discord_mod.Message = type("Message", (), {})
 
-    # Embed: accept the kwargs production code / tests use
-    # (title, description, color). MagicMock auto-attributes work too,
-    # but some tests construct and inspect .title/.description directly.
+    # Embed: keep a real-ish object so tests can inspect fields/footer.
     class _FakeEmbed:
         def __init__(self, *, title=None, description=None, color=None, **_):
             self.title = title
             self.description = description
             self.color = color
+            self.fields = []
+            self.footer = None
+
+        def add_field(self, *, name, value, inline=False):
+            self.fields.append(
+                SimpleNamespace(name=name, value=value, inline=inline)
+            )
+
+        def set_footer(self, *, text=None, **_):
+            self.footer = SimpleNamespace(text=text)
     discord_mod.Embed = _FakeEmbed
 
     # ui.View / ui.Select / ui.Button: real classes (not MagicMock) so
@@ -342,4 +351,3 @@ def pytest_configure(config):
             + "\n\n"
             + _GUARD_HINT
         )
-

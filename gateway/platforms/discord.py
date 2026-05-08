@@ -1099,6 +1099,53 @@ class DiscordAdapter(BasePlatformAdapter):
             elif outcome == ProcessingOutcome.FAILURE:
                 await self._add_reaction(message, "❌")
 
+    def _build_discord_embed(self, metadata: Optional[Dict[str, Any]]) -> Optional[Any]:
+        """Build a real discord.Embed from metadata when one was supplied.
+
+        The gateway passes structured embed payloads for Discord-specific
+        notifications. Other platforms should ignore the metadata entirely.
+        """
+        if not metadata:
+            return None
+
+        embed_payload = metadata.get("discord_embed")
+        if not embed_payload:
+            return None
+
+        if hasattr(embed_payload, "add_field") and hasattr(embed_payload, "set_footer"):
+            return embed_payload
+
+        if not isinstance(embed_payload, dict):
+            return None
+
+        title = embed_payload.get("title")
+        description = embed_payload.get("description")
+        color = embed_payload.get("color")
+
+        embed = discord.Embed(title=title, description=description, color=color)
+        for field in embed_payload.get("fields") or []:
+            if not isinstance(field, dict):
+                continue
+            name = field.get("name")
+            value = field.get("value")
+            if name is None or value is None:
+                continue
+            embed.add_field(
+                name=str(name),
+                value=str(value),
+                inline=bool(field.get("inline", False)),
+            )
+
+        footer = embed_payload.get("footer")
+        if isinstance(footer, dict):
+            footer_text = footer.get("text")
+        else:
+            footer_text = footer
+        if footer_text:
+            embed.set_footer(text=str(footer_text))
+
+        return embed
+
     async def send(
         self,
         chat_id: str,
@@ -1118,6 +1165,8 @@ class DiscordAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Not connected")
 
         try:
+            embed = self._build_discord_embed(metadata)
+
             # Determine target channel: thread_id in metadata takes precedence.
             thread_id = None
             if metadata and metadata.get("thread_id"):
@@ -1140,7 +1189,7 @@ class DiscordAdapter(BasePlatformAdapter):
 
             # Forum channels reject channel.send() — create a thread post instead.
             if self._is_forum_parent(channel):
-                return await self._send_to_forum(channel, content)
+                return await self._send_to_forum(channel, content, metadata=metadata)
 
             # Format and split message if needed
             formatted = self.format_message(content)
@@ -1164,10 +1213,12 @@ class DiscordAdapter(BasePlatformAdapter):
                     chunk_reference = reference
                 else:  # "first" (default) or "off"
                     chunk_reference = reference if i == 0 else None
+                chunk_embed = embed if i == 0 else None
                 try:
                     msg = await channel.send(
                         content=chunk,
                         reference=chunk_reference,
+                        embed=chunk_embed,
                     )
                 except Exception as e:
                     err_text = str(e)
@@ -1190,6 +1241,7 @@ class DiscordAdapter(BasePlatformAdapter):
                         msg = await channel.send(
                             content=chunk,
                             reference=None,
+                            embed=chunk_embed,
                         )
                     else:
                         raise
@@ -1205,7 +1257,12 @@ class DiscordAdapter(BasePlatformAdapter):
             logger.error("[%s] Failed to send Discord message: %s", self.name, e, exc_info=True)
             return SendResult(success=False, error=str(e))
 
-    async def _send_to_forum(self, forum_channel: Any, content: str) -> SendResult:
+    async def _send_to_forum(
+        self,
+        forum_channel: Any,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
         """Create a thread post in a forum channel with the message as starter content.
 
         Forum channels (type 15) don't support direct messages.  Instead we
@@ -1220,6 +1277,7 @@ class DiscordAdapter(BasePlatformAdapter):
         chunks = self.truncate_message(formatted, self.MAX_MESSAGE_LENGTH)
 
         thread_name = _derive_forum_thread_name(content)
+        embed = self._build_discord_embed(metadata)
 
         starter_content = chunks[0] if chunks else thread_name
 
@@ -1227,6 +1285,7 @@ class DiscordAdapter(BasePlatformAdapter):
             thread = await forum_channel.create_thread(
                 name=thread_name,
                 content=starter_content,
+                embed=embed,
             )
         except Exception as e:
             logger.error("[%s] Failed to create forum thread in %s: %s", self.name, forum_channel.id, e)

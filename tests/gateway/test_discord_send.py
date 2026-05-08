@@ -22,7 +22,24 @@ def _ensure_discord_mock():
     discord_mod.ButtonStyle = SimpleNamespace(success=1, primary=2, secondary=2, danger=3, green=1, grey=2, blurple=2, red=3)
     discord_mod.Color = SimpleNamespace(orange=lambda: 1, green=lambda: 2, blue=lambda: 3, red=lambda: 4, purple=lambda: 5)
     discord_mod.Interaction = object
-    discord_mod.Embed = MagicMock
+
+    class _FakeEmbed:
+        def __init__(self, *, title=None, description=None, color=None, **_):
+            self.title = title
+            self.description = description
+            self.color = color
+            self.fields = []
+            self.footer = None
+
+        def add_field(self, *, name, value, inline=False):
+            self.fields.append(
+                SimpleNamespace(name=name, value=value, inline=inline)
+            )
+
+        def set_footer(self, *, text=None, **_):
+            self.footer = SimpleNamespace(text=text)
+
+    discord_mod.Embed = _FakeEmbed
     discord_mod.app_commands = SimpleNamespace(
         describe=lambda **kwargs: (lambda fn: fn),
         choices=lambda **kwargs: (lambda fn: fn),
@@ -53,8 +70,8 @@ async def test_send_retries_without_reference_when_reply_target_is_system_messag
     sent_msg = SimpleNamespace(id=1234)
     send_calls = []
 
-    async def fake_send(*, content, reference=None):
-        send_calls.append({"content": content, "reference": reference})
+    async def fake_send(*, content, reference=None, embed=None):
+        send_calls.append({"content": content, "reference": reference, "embed": embed})
         if len(send_calls) == 1:
             raise RuntimeError(
                 "400 Bad Request (error code: 50035): Invalid Form Body\n"
@@ -91,8 +108,8 @@ async def test_send_retries_without_reference_when_reply_target_is_deleted():
     sent_msgs = [SimpleNamespace(id=1001), SimpleNamespace(id=1002)]
     send_calls = []
 
-    async def fake_send(*, content, reference=None):
-        send_calls.append({"content": content, "reference": reference})
+    async def fake_send(*, content, reference=None, embed=None):
+        send_calls.append({"content": content, "reference": reference, "embed": embed})
         if len(send_calls) == 1:
             raise RuntimeError(
                 "400 Bad Request (error code: 10008): Unknown Message"
@@ -134,8 +151,8 @@ async def test_send_does_not_retry_on_unrelated_errors():
     ref_msg = SimpleNamespace(id=99, to_reference=MagicMock(return_value=reference_obj))
     send_calls = []
 
-    async def fake_send(*, content, reference=None):
-        send_calls.append({"content": content, "reference": reference})
+    async def fake_send(*, content, reference=None, embed=None):
+        send_calls.append({"content": content, "reference": reference, "embed": embed})
         raise RuntimeError(
             "403 Forbidden (error code: 50013): Missing Permissions"
         )
@@ -157,6 +174,54 @@ async def test_send_does_not_retry_on_unrelated_errors():
     # Only the first attempt happens — no reference-retry replay.
     assert channel.send.await_count == 1
     assert send_calls[0]["reference"] is reference_obj
+
+
+@pytest.mark.asyncio
+async def test_send_attaches_discord_embed_to_first_chunk_only():
+    adapter = DiscordAdapter(PlatformConfig(enabled=True, token="***"))
+    adapter.MAX_MESSAGE_LENGTH = 20
+
+    sent_msg_1 = SimpleNamespace(id=2001)
+    sent_msg_2 = SimpleNamespace(id=2002)
+    send_calls = []
+
+    async def fake_send(*, content, reference=None, embed=None):
+        send_calls.append({"content": content, "reference": reference, "embed": embed})
+        return sent_msg_1 if len(send_calls) == 1 else sent_msg_2
+
+    channel = SimpleNamespace(
+        send=AsyncMock(side_effect=fake_send),
+    )
+    adapter._client = SimpleNamespace(
+        get_channel=lambda _chat_id: channel,
+        fetch_channel=AsyncMock(return_value=channel),
+    )
+
+    embed_payload = {
+        "title": "Gateway restarting",
+        "description": "Your current task will be interrupted.",
+        "color": 0x2F3136,
+        "fields": [
+            {"name": "Session", "value": "20260508_003540_1b0e2b", "inline": False},
+            {"name": "Resume", "value": "yes", "inline": True},
+        ],
+        "footer": {"text": "Send any message after restart to resume"},
+    }
+
+    result = await adapter.send(
+        "555",
+        "A" * 50,
+        metadata={"discord_embed": embed_payload},
+    )
+
+    assert result.success is True
+    assert len(send_calls) >= 2
+    assert send_calls[0]["embed"] is not None
+    assert send_calls[1]["embed"] is None
+    assert send_calls[0]["embed"].title == "Gateway restarting"
+    assert send_calls[0]["embed"].description == "Your current task will be interrupted."
+    assert send_calls[0]["embed"].fields[0].name == "Session"
+    assert send_calls[0]["embed"].footer.text == "Send any message after restart to resume"
 
 
 # ---------------------------------------------------------------------------
@@ -217,11 +282,27 @@ async def test_send_to_forum_creates_thread_post():
         fetch_channel=AsyncMock(),
     )
 
-    result = await adapter.send("999", "Hello forum!")
+    embed_payload = {
+        "title": "Gateway restarting",
+        "description": "Task will resume after restart.",
+        "color": 0x5865F2,
+        "fields": [
+            {"name": "Session", "value": "20260508_003540_1b0e2b", "inline": False},
+            {"name": "Resume", "value": "yes", "inline": True},
+        ],
+        "footer": {"text": "Send any message after restart to resume"},
+    }
+
+    result = await adapter.send("999", "Hello forum!", metadata={"discord_embed": embed_payload})
 
     assert result.success is True
     assert result.message_id == "500"
     forum_channel.create_thread.assert_awaited_once()
+    call_kwargs = forum_channel.create_thread.await_args.kwargs
+    assert call_kwargs["embed"] is not None
+    assert call_kwargs["embed"].title == "Gateway restarting"
+    assert call_kwargs["embed"].fields[0].name == "Session"
+    assert call_kwargs["embed"].footer.text == "Send any message after restart to resume"
 
 
 @pytest.mark.asyncio

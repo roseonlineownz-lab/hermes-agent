@@ -2243,6 +2243,85 @@ class GatewayRunner:
             + "\n```"
         )
 
+    def _build_shutdown_notification_embed_payload(
+        self,
+        *,
+        action: str,
+        session_key: Optional[str] = None,
+        source: Optional[Any] = None,
+        entry: Optional[Any] = None,
+        active_session_count: Optional[int] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Build a structured Discord embed payload for shutdown notifications."""
+        fields: list[Dict[str, Any]] = []
+
+        def add_field(name: str, value: Any) -> None:
+            if value is None:
+                return
+            text = str(value).strip()
+            if not text:
+                return
+            fields.append({"name": name, "value": text, "inline": False})
+
+        add_field("Session key", session_key)
+
+        if entry is not None:
+            add_field("Session ID", getattr(entry, "session_id", None))
+            add_field("Display name", getattr(entry, "display_name", None))
+            add_field("Chat type", getattr(entry, "chat_type", None))
+
+            resume_pending = getattr(entry, "resume_pending", None)
+            if resume_pending is not None:
+                add_field("Resume pending", "yes" if resume_pending else "no")
+
+            add_field("Resume reason", getattr(entry, "resume_reason", None))
+
+        if source is not None:
+            platform = getattr(getattr(source, "platform", None), "value", None)
+            if platform is None:
+                platform = getattr(source, "platform", None)
+            chat_id = getattr(source, "chat_id", None)
+            thread_id = getattr(source, "thread_id", None)
+            if platform and chat_id:
+                origin = f"{platform}:{chat_id}"
+                if thread_id:
+                    origin = f"{origin}:{thread_id}"
+                add_field("Origin", origin)
+
+            add_field("User", getattr(source, "user_name", None))
+
+        if active_session_count is not None:
+            add_field("Active sessions", active_session_count)
+
+        add_field(
+            "Recovery",
+            "send any message after restart to continue"
+            if self._restart_requested
+            else "task will pause until the gateway is back",
+        )
+        add_field("Note", "best-effort; stuck work can still escalate")
+
+        if not fields:
+            return None
+
+        action_label = "restarting" if action == "restarting" else "shutting down"
+        description = (
+            "The gateway is restarting. Active work will resume when a new message arrives."
+            if action_label == "restarting"
+            else "The gateway is shutting down. Active work is paused until it returns."
+        )
+        color = 0xF59E0B if action_label == "restarting" else 0xEF4444
+
+        return {
+            "title": f"Gateway {action_label}",
+            "description": description,
+            "color": color,
+            "fields": fields,
+            "footer": {
+                "text": "Send any message after restart to continue",
+            },
+        }
+
     def _queue_or_replace_pending_event(self, session_key: str, event: MessageEvent) -> None:
         adapter = self.adapters.get(event.source.platform)
         if not adapter:
@@ -2527,6 +2606,16 @@ class GatewayRunner:
                 # Include thread_id if present so the message lands in the
                 # correct forum topic / thread.
                 metadata = {"thread_id": thread_id} if thread_id else None
+                if platform == Platform.DISCORD:
+                    discord_embed = self._build_shutdown_notification_embed_payload(
+                        action="restarting" if self._restart_requested else "shutting down",
+                        session_key=session_key,
+                        source=source,
+                        entry=entry,
+                    )
+                    if discord_embed:
+                        metadata = dict(metadata or {})
+                        metadata["discord_embed"] = discord_embed
 
                 msg = self._build_shutdown_notification(
                     action="restarting" if self._restart_requested else "shutting down",
@@ -2566,6 +2655,14 @@ class GatewayRunner:
 
             try:
                 metadata = {"thread_id": home.thread_id} if home.thread_id else None
+                if platform == Platform.DISCORD:
+                    discord_embed = self._build_shutdown_notification_embed_payload(
+                        action="restarting" if self._restart_requested else "shutting down",
+                        active_session_count=len(active),
+                    )
+                    if discord_embed:
+                        metadata = dict(metadata or {})
+                        metadata["discord_embed"] = discord_embed
                 home_msg = self._build_shutdown_notification(
                     action="restarting" if self._restart_requested else "shutting down",
                     active_session_count=len(active),
