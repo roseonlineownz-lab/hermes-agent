@@ -24,6 +24,60 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+
+# Cache one cheap PulseAudio probe per process so failed ALSA/Pulse opens don't
+# keep spamming stderr with PortAudio C-level diagnostics.
+_pulse_usable_cache: Optional[bool] = None
+
+
+def _pulse_output_usable() -> bool:
+    """Return whether PulseAudio output should be attempted.
+
+    In WSL/Linux setups a stale or refused Pulse socket causes PortAudio to
+    print noisy ALSA stack traces directly to stderr (outside Python logging).
+    We preflight once and skip audio playback/beeps entirely when unreachable.
+    """
+    global _pulse_usable_cache
+
+    if _pulse_usable_cache is not None:
+        return _pulse_usable_cache
+
+    # Non-Linux paths are unaffected by ALSA/Pulse diagnostics.
+    if platform.system() != "Linux":
+        _pulse_usable_cache = True
+        return True
+
+    pulse_server = os.environ.get("PULSE_SERVER", "").strip()
+    if not pulse_server:
+        _pulse_usable_cache = True
+        return True
+
+    if pulse_server.startswith("unix:"):
+        socket_path = pulse_server[len("unix:"):]
+        if not socket_path or not os.path.exists(socket_path):
+            _pulse_usable_cache = False
+            return False
+
+    pactl = shutil.which("pactl")
+    if pactl:
+        try:
+            probe = subprocess.run(
+                [pactl, "info"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=1,
+                check=False,
+            )
+            _pulse_usable_cache = probe.returncode == 0
+            return _pulse_usable_cache
+        except Exception:
+            _pulse_usable_cache = False
+            return False
+
+    # If pactl is unavailable but socket exists, allow a best effort.
+    _pulse_usable_cache = True
+    return True
+
 # ---------------------------------------------------------------------------
 # Lazy audio imports -- never imported at module level to avoid crashing
 # in headless environments (SSH, Docker, WSL, no PortAudio).
@@ -206,6 +260,9 @@ def play_beep(frequency: int = 880, duration: float = 0.12, count: int = 1) -> N
         duration: Duration of each beep in seconds.
         count: Number of beeps to play (with short gap between).
     """
+    if not _pulse_output_usable():
+        return
+
     try:
         sd, np = _import_audio()
     except (ImportError, OSError):
@@ -857,6 +914,10 @@ def play_audio_file(file_path: str) -> bool:
 
     if not os.path.isfile(file_path):
         logger.warning("Audio file not found: %s", file_path)
+        return False
+
+    if not _pulse_output_usable():
+        logger.debug("Skipping audio playback: PulseAudio unavailable")
         return False
 
     # Try sounddevice for WAV files
