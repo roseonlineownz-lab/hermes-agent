@@ -1760,6 +1760,14 @@ OPTIONAL_ENV_VARS = {
     },
 
     # ── Tool API keys ──
+    "DEVIN_API_KEY": {
+        "description": "Devin agent API key for spawning/managing Devin sessions",
+        "prompt": "Devin API key",
+        "url": "https://app.devin.ai/settings/api-keys",
+        "password": True,
+        "category": "tool",
+        "advanced": True,
+    },
     "EXA_API_KEY": {
         "description": "Exa API key for AI-native web search and contents",
         "prompt": "Exa API key",
