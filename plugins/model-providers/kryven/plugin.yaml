@@ -1,0 +1,5 @@
+name: kryven-provider
+kind: model-provider
+version: 1.0.0
+description: Kryven Conductor (uncensored, OpenAI-compatible)
+author: roseonlineownz-lab
