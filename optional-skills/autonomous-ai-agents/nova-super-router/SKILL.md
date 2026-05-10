@@ -212,10 +212,13 @@ def route(
         while p in chain:
             chain.remove(p)
 
-    # Caller preferences (preserve order)
+    # Caller preferences — only promote providers already in the filtered chain,
+    # so prefer=[...] cannot revive a provider that was just dropped by a safety
+    # constraint (must_be_uncensored, must_be_local, max_cost_per_call_usd, extra_drop).
     preferred = constraints.get("prefer") or []
     if preferred:
-        chain = list(preferred) + [p for p in chain if p not in preferred]
+        front = [p for p in preferred if p in chain]
+        chain = front + [p for p in chain if p not in front]
 
     # Availability filter — drop anything without creds
     chain = [p for p in chain if _is_available(p)]
