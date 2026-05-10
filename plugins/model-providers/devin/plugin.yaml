@@ -1,0 +1,4 @@
+name: devin-provider
+kind: model-provider
+version: 1.0.0
+description: Devin — autonomous AI coding agent by Cognition
