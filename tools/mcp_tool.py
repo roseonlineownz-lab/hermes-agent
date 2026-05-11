@@ -3181,6 +3181,10 @@ def get_mcp_status() -> List[dict]:
     """Return status of all configured MCP servers for banner display.
 
     Returns a list of dicts with keys: name, transport, tools, connected.
+    ``connected`` can be ``True`` (live session), ``"reconnecting"`` (had a
+    session, tools still registered, but session is temporarily ``None``),
+    or ``False`` (never connected / failed).
+
     Includes both successfully connected servers and configured-but-failed ones.
     """
     result: List[dict] = []
@@ -3206,6 +3210,15 @@ def get_mcp_status() -> List[dict]:
             if server._sampling:
                 entry["sampling"] = dict(server._sampling.metrics)
             result.append(entry)
+        elif server and getattr(server, "_registered_tool_names", None):
+            # Server was connected and tools are registered, but the session
+            # is temporarily None (reconnecting after a transient drop).
+            result.append({
+                "name": name,
+                "transport": transport,
+                "tools": len(server._registered_tool_names),
+                "connected": "reconnecting",
+            })
         else:
             result.append({
                 "name": name,

@@ -545,10 +545,15 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
         right_lines.append("")
         right_lines.append(f"[bold {accent}]MCP Servers[/]")
         for srv in mcp_status:
-            if srv["connected"]:
+            if srv["connected"] is True:
                 right_lines.append(
                     f"[dim {dim}]{srv['name']}[/] [{text}]({srv['transport']})[/] "
                     f"[dim {dim}]—[/] [{text}]{srv['tools']} tool(s)[/]"
+                )
+            elif srv["connected"] == "reconnecting":
+                right_lines.append(
+                    f"[yellow]{srv['name']}[/] [{text}]({srv['transport']})[/] "
+                    f"[yellow]— reconnecting[/] [dim]({srv['tools']} tool(s))[/]"
                 )
             else:
                 right_lines.append(
@@ -576,7 +581,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
         right_lines.append(f"[dim {dim}]No skills installed[/]")
 
     right_lines.append("")
-    mcp_connected = sum(1 for s in mcp_status if s["connected"]) if mcp_status else 0
+    mcp_connected = sum(1 for s in mcp_status if s["connected"] and s["connected"] is not False) if mcp_status else 0
     summary_parts = [f"{len(tools)} tools", f"{total_skills} skills"]
     if mcp_connected:
         summary_parts.append(f"{mcp_connected} MCP servers")

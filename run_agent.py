@@ -1025,6 +1025,45 @@ def _qwen_portal_headers() -> dict:
     }
 
 
+# Common tool name aliases that models hallucinate across providers.
+# Maps lowercased hallucinated name → canonical Hermes tool name.
+# Used by AIAgent._repair_tool_call() to fix common model mistakes.
+_TOOL_ALIASES: dict[str, str] = {
+    "run": "terminal",
+    "run_command": "terminal",
+    "run_terminal": "terminal",
+    "shell": "terminal",
+    "exec": "terminal",
+    "execute": "terminal",
+    "execute_command": "terminal",
+    "run_shell": "terminal",
+    "bash": "terminal",
+    "browse_website": "browser_navigate",
+    "browse": "browser_navigate",
+    "open_url": "browser_navigate",
+    "web_browse": "browser_navigate",
+    "visit_url": "browser_navigate",
+    "open_browser": "browser_navigate",
+    "search": "web_search",
+    "google_search": "web_search",
+    "internet_search": "web_search",
+    "read": "read_file",
+    "cat": "read_file",
+    "view_file": "read_file",
+    "open_file": "read_file",
+    "write": "write_file",
+    "create_file": "write_file",
+    "save_file": "write_file",
+    "find": "search_files",
+    "grep": "search_files",
+    "search_code": "search_files",
+    "edit": "patch",
+    "edit_file": "patch",
+    "replace": "patch",
+    "modify_file": "patch",
+}
+
+
 class AIAgent:
     """
     AI Agent with tool calling capabilities.
@@ -6097,7 +6136,7 @@ class AIAgent:
 
         Models sometimes emit variants of a tool name that differ only
         in casing, separators, or class-like suffixes. Normalize
-        aggressively before falling back to fuzzy match:
+        aggressively before falling back to alias lookup and fuzzy match:
 
         1. Lowercase direct match.
         2. Lowercase + hyphens/spaces -> underscores.
@@ -6106,7 +6145,8 @@ class AIAgent:
            Claude-style models sometimes tack on (TodoTool_tool ->
            TodoTool -> Todo -> todo). Applied twice so double-tacked
            suffixes like ``TodoTool_tool`` reduce all the way.
-        5. Fuzzy match (difflib, cutoff=0.7).
+        5. Common alias lookup (e.g. ``run`` → ``terminal``).
+        6. Fuzzy match (difflib, cutoff=0.7).
 
         See #14784 for the original reports (TodoTool_tool, Patch_tool,
         BrowserClick_tool were all returning "Unknown tool" before).
@@ -6156,6 +6196,12 @@ class AIAgent:
         for c in cands:
             if c and c in self.valid_tool_names:
                 return c
+
+        # Well-known alias lookup — models frequently hallucinate generic
+        # names like "run", "browse_website", "exec", etc.
+        alias = _TOOL_ALIASES.get(normalized)
+        if alias and alias in self.valid_tool_names:
+            return alias
 
         # Fuzzy match as last resort.
         matches = get_close_matches(lowered, self.valid_tool_names, n=1, cutoff=0.7)

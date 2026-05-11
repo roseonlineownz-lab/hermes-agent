@@ -134,7 +134,7 @@ export type SectionName = 'thinking' | 'tools' | 'subagents' | 'activity'
 export type SectionVisibility = Partial<Record<SectionName, DetailsMode>>
 
 export interface McpServerStatus {
-  connected: boolean
+  connected: boolean | 'reconnecting'
   name: string
   tools: number
   transport: string
