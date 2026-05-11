@@ -65,7 +65,7 @@ The router decides on the basis of three signals: **task class**, **constraints*
 
 - `must_be_local: true` → `ollama` only.
 - `must_be_uncensored: true` → drop Anthropic/Gemini, use `ollama (heretic/dolphin) → openrouter → kryven`.
-- `max_cost_per_call_usd: <X>` → drop Anthropic if X < 0.05, drop Gemini if X < 0.01.
+- `max_cost_per_call_usd: <X>` → drop Anthropic if X < 0.015, drop Gemini if X < 0.005 (thresholds match `_COST_PER_1K_OUT` in the reference impl below).
 - `latency_p50_ms: <X>` → drop Anthropic if X < 1000, prefer Groq.
 - `needs_tools: true` → drop pure-text providers, prefer Anthropic / OpenAI-compatible with function-calling.
 
@@ -103,7 +103,10 @@ Usage:
     from nova_super_router import route
 
     chain = route(task_class="code.gen", constraints={"max_cost_per_call_usd": 0.02})
-    # -> ["deepseek", "gemini", "ollama"]
+    # -> ["anthropic", "deepseek", "gemini", "ollama"]   (anthropic survives: 0.015 <= 0.02)
+
+    chain = route(task_class="code.gen", constraints={"max_cost_per_call_usd": 0.01})
+    # -> ["deepseek", "gemini", "ollama"]                (anthropic dropped: 0.015 > 0.01)
 
 No network calls. No LLM. Just env-aware filtering of pre-defined chains.
 """
