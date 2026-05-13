@@ -1,0 +1,29 @@
+pull_request_rules:
+  - name: auto-merge Renovate PRs when CI passes
+    conditions:
+      - author = renovate[bot]
+      - "#approved-reviews-by >= 0"
+      - check-success != null
+    actions:
+      merge:
+        method: squash
+        commit_message_template: |
+          {{ title }} (#{{ number }})
+          {{ body }}
+
+  - name: auto-merge when approved and CI passes
+    conditions:
+      - "#approved-reviews-by >= 1"
+      - check-success != null
+      - label != wip
+    actions:
+      merge:
+        method: squash
+
+  - name: label Renovate PRs
+    conditions:
+      - author = renovate[bot]
+    actions:
+      label:
+        add:
+          - dependencies
