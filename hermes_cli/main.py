@@ -5634,6 +5634,18 @@ def _find_stale_dashboard_pids() -> list[int]:
         "hermes_cli/main.py dashboard",
     ]
     self_pid = os.getpid()
+    ignored_pids = {self_pid, os.getppid()}
+    if sys.platform != "win32":
+        parent_pid = os.getppid()
+        while parent_pid and parent_pid > 1:
+            stat_path = f"/proc/{parent_pid}/stat"
+            try:
+                with open(stat_path, "r", encoding="utf-8") as stat_file:
+                    fields = stat_file.read().split()
+                parent_pid = int(fields[3])
+            except (OSError, ValueError, IndexError):
+                break
+            ignored_pids.add(parent_pid)
     dashboard_pids: list[int] = []
 
     try:
@@ -5664,7 +5676,7 @@ def _find_stale_dashboard_pids() -> list[int]:
                     pid_str = line[len("ProcessId=") :]
                     if (
                         any(p in current_cmd for p in patterns)
-                        and int(pid_str) != self_pid
+                        and int(pid_str) not in ignored_pids
                     ):
                         try:
                             dashboard_pids.append(int(pid_str))
@@ -5696,7 +5708,16 @@ def _find_stale_dashboard_pids() -> list[int]:
                     except ValueError:
                         continue
                     command = parts[1]
-                    if any(p in command for p in patterns) and pid != self_pid:
+                    if any(
+                        marker in command
+                        for marker in (
+                            " dashboard --status",
+                            " dashboard --restart",
+                            " dashboard --stop",
+                        )
+                    ):
+                        continue
+                    if any(p in command for p in patterns) and pid not in ignored_pids:
                         dashboard_pids.append(pid)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return []
