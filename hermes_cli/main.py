@@ -11815,13 +11815,26 @@ Examples:
                 exc_info=True,
             )
         try:
-            # MCP tool discovery — no event loop running in CLI/TUI startup,
-            # so inline is safe.  Moved here from model_tools.py module scope
-            # to avoid freezing the gateway's event loop on its first message
-            # via the same lazy import path (#16856).
-            from tools.mcp_tool import discover_mcp_tools
+            from hermes_cli.config import cfg_get, load_config
 
-            discover_mcp_tools()
+            _skip_mcp_startup = os.getenv(
+                "HERMES_SKIP_MCP_STARTUP_DISCOVERY",
+                "",
+            ).strip().lower() in {"1", "true", "yes", "on"}
+            _startup_discovery = cfg_get(
+                load_config(),
+                "mcp",
+                "startup_discovery",
+                default=True,
+            )
+            if _startup_discovery is not False and not _skip_mcp_startup:
+                # MCP tool discovery — no event loop running in CLI/TUI startup,
+                # so inline is safe.  Moved here from model_tools.py module scope
+                # to avoid freezing the gateway's event loop on its first message
+                # via the same lazy import path (#16856).
+                from tools.mcp_tool import discover_mcp_tools
+
+                discover_mcp_tools()
         except Exception:
             logger.debug(
                 "MCP tool discovery failed at CLI startup",
