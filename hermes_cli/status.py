@@ -89,7 +89,8 @@ from hermes_constants import is_termux as _is_termux
 
 def show_status(args):
     """Show status of all Hermes Agent components."""
-    show_all = getattr(args, 'all', False)
+    force_redact = getattr(args, "redact", False)
+    show_all = bool(getattr(args, "all", False) and not force_redact)
     deep = getattr(args, 'deep', False)
 
     print()

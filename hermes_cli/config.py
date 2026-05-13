@@ -4900,7 +4900,15 @@ def edit_config():
     subprocess.run([editor, str(config_path)])
 
 
-def set_config_value(key: str, value: str):
+def _should_redact_config_key(key: str) -> bool:
+    upper = key.upper()
+    return any(
+        marker in upper
+        for marker in ("KEY", "TOKEN", "SECRET", "PASSWORD", "COOKIE", "AUTH", "CREDENTIAL")
+    )
+
+
+def set_config_value(key: str, value: str, *, quick: bool = False):
     """Set a configuration value."""
     if is_managed():
         managed_error("set configuration values")
@@ -4921,7 +4929,8 @@ def set_config_value(key: str, value: str):
     
     if key.upper() in api_keys or key.upper().endswith(('_API_KEY', '_TOKEN')) or key.upper().startswith('TERMINAL_SSH'):
         save_env_value(key.upper(), value)
-        print(f"✓ Set {key} in {get_env_path()}")
+        suffix = f" ({redact_key(value)})" if quick else ""
+        print(f"✓ Set {key} in {get_env_path()}{suffix}")
         return
     
     # Otherwise it goes to config.yaml
@@ -4985,7 +4994,8 @@ def set_config_value(key: str, value: str):
     if key in _config_to_env_sync:
         save_env_value(_config_to_env_sync[key], str(value))
 
-    print(f"✓ Set {key} = {value} in {config_path}")
+    display_value = redact_key(str(value)) if quick or _should_redact_config_key(key) else value
+    print(f"✓ Set {key} = {display_value} in {config_path}")
 
 
 # =============================================================================
@@ -5006,14 +5016,14 @@ def config_command(args):
         key = getattr(args, 'key', None)
         value = getattr(args, 'value', None)
         if not key or value is None:
-            print("Usage: hermes config set <key> <value>")
+            print("Usage: hermes config set [--quick] <key> <value>")
             print()
             print("Examples:")
             print("  hermes config set model anthropic/claude-sonnet-4")
             print("  hermes config set terminal.backend docker")
-            print("  hermes config set OPENROUTER_API_KEY sk-or-...")
+            print("  hermes config set --quick OPENROUTER_API_KEY sk-or-...")
             sys.exit(1)
-        set_config_value(key, value)
+        set_config_value(key, value, quick=getattr(args, 'quick', False))
     
     elif subcmd == "path":
         print(get_config_path())

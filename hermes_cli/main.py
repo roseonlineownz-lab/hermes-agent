@@ -9058,12 +9058,73 @@ def _report_dashboard_status() -> int:
     return len(pids)
 
 
+def _restart_dashboard_service(args) -> int:
+    """Restart the systemd-managed dashboard and verify the HTTP surface."""
+    service_name = "nova-hermes-dashboard.service"
+    host = getattr(args, "host", "127.0.0.1")
+    port = int(getattr(args, "port", 9119) or 9119)
+
+    try:
+        show_result = subprocess.run(
+            ["systemctl", "--user", "show", service_name, "-p", "FragmentPath", "--value"],
+            text=True,
+            capture_output=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        print(f"systemctl --user unavailable: {exc}")
+        print("Fallback: run `hermes dashboard --stop` and then `hermes dashboard --no-open`.")
+        return 1
+
+    if show_result.returncode != 0 or not show_result.stdout.strip():
+        print(f"{service_name} is not installed for systemd --user.")
+        print("Fallback: run `hermes dashboard --stop` and then `hermes dashboard --no-open`.")
+        return 1
+
+    print(f"Restarting {service_name}...")
+    restart_result = subprocess.run(
+        ["systemctl", "--user", "restart", service_name],
+        text=True,
+        capture_output=True,
+        timeout=20,
+    )
+    if restart_result.returncode != 0:
+        if restart_result.stderr.strip():
+            print(restart_result.stderr.strip())
+        return restart_result.returncode
+
+    import time
+    import urllib.error
+    import urllib.request
+
+    url = f"http://{host}:{port}/"
+    last_error = ""
+    for _ in range(20):
+        try:
+            with urllib.request.urlopen(url, timeout=1.5) as response:
+                print(f"Dashboard restarted: {url} ({response.status})")
+                return 0
+        except urllib.error.HTTPError as exc:
+            print(f"Dashboard restarted: {url} ({exc.code})")
+            return 0
+        except Exception as exc:  # pragma: no cover - runtime service probe
+            last_error = str(exc)
+            time.sleep(0.5)
+
+    print(f"Dashboard restart command succeeded, but health probe failed: {last_error}")
+    return 2
+
+
 def cmd_dashboard(args):
     """Start the web UI server, or (with --stop/--status) manage running ones."""
     # --status: report running dashboards and exit, no deps needed.
     if getattr(args, "status", False):
         count = _report_dashboard_status()
         sys.exit(0 if count == 0 else 0)  # status is informational, always 0
+
+    # --restart: restart the managed dashboard service and verify it.
+    if getattr(args, "restart", False):
+        sys.exit(_restart_dashboard_service(args))
 
     # --stop: kill any running dashboards and exit, no deps needed.
     if getattr(args, "stop", False):
@@ -9798,7 +9859,10 @@ def main():
         description="Display status of Hermes Agent components",
     )
     status_parser.add_argument(
-        "--all", action="store_true", help="Show all details (redacted for sharing)"
+        "--all", action="store_true", help="Show all details, including unredacted provider values"
+    )
+    status_parser.add_argument(
+        "--redact", action="store_true", help="Force redaction even when --all is present"
     )
     status_parser.add_argument(
         "--deep", action="store_true", help="Run deep checks (may take longer)"
@@ -10275,6 +10339,11 @@ Examples:
 
     # config set
     config_set = config_subparsers.add_parser("set", help="Set a configuration value")
+    config_set.add_argument(
+        "--quick",
+        action="store_true",
+        help="Set with minimal validation/output and redact displayed values",
+    )
     config_set.add_argument(
         "key", nargs="?", help="Configuration key (e.g., model, terminal.backend)"
     )
@@ -11653,6 +11722,11 @@ Examples:
         "--status",
         action="store_true",
         help="List running hermes dashboard processes and exit",
+    )
+    dashboard_parser.add_argument(
+        "--restart",
+        action="store_true",
+        help="Restart the managed Hermes dashboard service, verify it, then exit",
     )
     dashboard_parser.set_defaults(func=cmd_dashboard)
 
