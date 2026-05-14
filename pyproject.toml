@@ -229,7 +229,11 @@ testpaths = ["tests"]
 markers = [
     "integration: marks tests requiring external services (API keys, Modal, etc.)",
 ]
-addopts = "-m 'not integration' -n auto"
+# Disable the auto-loaded logfire pytest plugins. Some local/dev environments
+# have an incompatible logfire/opentelemetry pair installed globally, which
+# crashes pytest before collection starts. Keeping the disable list here keeps
+# CI and local runs stable without changing repo code paths.
+addopts = "-m 'not integration' -n auto -p no:logfire -p no:pytest_logfire"
 
 [tool.ty.environment]
 python-version = "3.13"
