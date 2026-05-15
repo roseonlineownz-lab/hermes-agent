@@ -6,6 +6,7 @@ Pure display functions with no HermesCLI state dependency.
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -59,6 +60,20 @@ def _skin_branding(key: str, fallback: str) -> str:
         return get_active_skin().get_branding(key, fallback)
     except Exception:
         return fallback
+
+
+_LEGACY_COLOR_CLOSE_TAG_RE = re.compile(r"\[/\s*#[0-9a-fA-F]{3,8}\s*\]")
+
+
+def _sanitize_skin_markup(value: str) -> str:
+    """Normalize legacy Rich close tags in user-defined skin markup.
+
+    Some older/custom skins use closing tags like ``[/#B39DFF]`` while opening
+    with styles such as ``[bold #B39DFF]``. Rich expects ``[/]`` in this case.
+    """
+    if not value:
+        return value
+    return _LEGACY_COLOR_CLOSE_TAG_RE.sub("[/]", value)
 
 
 # =========================================================================
@@ -462,6 +477,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     except Exception:
         _bskin = None
         _hero = HERMES_CADUCEUS
+    _hero = _sanitize_skin_markup(_hero)
     left_lines = ["", _hero, ""]
     model_short = model.split("/")[-1] if "/" in model else model
     if model_short.endswith(".gguf"):
@@ -643,6 +659,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     term_width = shutil.get_terminal_size().columns
     if term_width >= 95:
         _logo = _bskin.banner_logo if _bskin and hasattr(_bskin, 'banner_logo') and _bskin.banner_logo else HERMES_AGENT_LOGO
+        _logo = _sanitize_skin_markup(_logo)
         console.print(_logo)
         console.print()
     console.print(outer_panel)
