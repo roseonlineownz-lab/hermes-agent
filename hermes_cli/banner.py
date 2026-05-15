@@ -6,6 +6,7 @@ Pure display functions with no HermesCLI state dependency.
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -59,6 +60,20 @@ def _skin_branding(key: str, fallback: str) -> str:
         return get_active_skin().get_branding(key, fallback)
     except Exception:
         return fallback
+
+
+_LEGACY_COLOR_CLOSE_TAG_RE = re.compile(r"\[/\s*#[0-9a-fA-F]{3,8}\s*\]")
+
+
+def _sanitize_skin_markup(value: str) -> str:
+    """Normalize legacy Rich close tags in user-defined skin markup.
+
+    Some older/custom skins use closing tags like ``[/#B39DFF]`` while opening
+    with styles such as ``[bold #B39DFF]``. Rich expects ``[/]`` in this case.
+    """
+    if not value:
+        return value
+    return _LEGACY_COLOR_CLOSE_TAG_RE.sub("[/]", value)
 
 
 # =========================================================================
@@ -462,6 +477,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     except Exception:
         _bskin = None
         _hero = HERMES_CADUCEUS
+    _hero = _sanitize_skin_markup(_hero)
     left_lines = ["", _hero, ""]
     model_short = model.split("/")[-1] if "/" in model else model
     if model_short.endswith(".gguf"):
@@ -545,10 +561,15 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
         right_lines.append("")
         right_lines.append(f"[bold {accent}]MCP Servers[/]")
         for srv in mcp_status:
-            if srv["connected"]:
+            if srv["connected"] is True:
                 right_lines.append(
                     f"[dim {dim}]{srv['name']}[/] [{text}]({srv['transport']})[/] "
                     f"[dim {dim}]—[/] [{text}]{srv['tools']} tool(s)[/]"
+                )
+            elif srv["connected"] == "reconnecting":
+                right_lines.append(
+                    f"[yellow]{srv['name']}[/] [{text}]({srv['transport']})[/] "
+                    f"[yellow]— reconnecting[/] [dim]({srv['tools']} tool(s))[/]"
                 )
             else:
                 right_lines.append(
@@ -576,7 +597,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
         right_lines.append(f"[dim {dim}]No skills installed[/]")
 
     right_lines.append("")
-    mcp_connected = sum(1 for s in mcp_status if s["connected"]) if mcp_status else 0
+    mcp_connected = sum(1 for s in mcp_status if s["connected"] and s["connected"] is not False) if mcp_status else 0
     summary_parts = [f"{len(tools)} tools", f"{total_skills} skills"]
     if mcp_connected:
         summary_parts.append(f"{mcp_connected} MCP servers")
@@ -651,6 +672,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     term_width = shutil.get_terminal_size().columns
     if term_width >= 95:
         _logo = _bskin.banner_logo if _bskin and hasattr(_bskin, 'banner_logo') and _bskin.banner_logo else HERMES_AGENT_LOGO
+        _logo = _sanitize_skin_markup(_logo)
         console.print(_logo)
         console.print()
     console.print(outer_panel)

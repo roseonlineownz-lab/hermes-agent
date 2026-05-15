@@ -70,3 +70,7 @@ mini-swe-agent/
 result
 website/static/api/skills-index.json
 models-dev-upstream/
+
+# Local nested repos; keep local, never as gitlinks in this repo
+.agent/template/
+hermes-control-interface/

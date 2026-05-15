@@ -188,9 +188,13 @@ export function SessionPanel({ info, sid, t }: SessionPanelProps) {
           <Text color={t.color.muted}>{`  ${s.name} `}</Text>
           <Text color={t.color.muted}>{`[${s.transport}]`}</Text>
           <Text color={t.color.muted}>: </Text>
-          {s.connected ? (
+          {s.connected === true ? (
             <Text color={t.color.text}>
               {s.tools} tool{s.tools === 1 ? '' : 's'}
+            </Text>
+          ) : s.connected === 'reconnecting' ? (
+            <Text color="yellow">
+              reconnecting ({s.tools} tool{s.tools === 1 ? '' : 's'})
             </Text>
           ) : (
             <Text color={t.color.error}>failed</Text>

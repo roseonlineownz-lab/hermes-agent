@@ -13,6 +13,7 @@ sys.path = [p for p in sys.path if p not in {"", "."}]
 
 import json
 import signal
+import threading
 import time
 import traceback
 
@@ -223,6 +224,21 @@ def main():
     }):
         _log_exit("startup write failed (broken stdout pipe before first event)")
         sys.exit(0)
+
+    # Background retry for MCP servers that failed initial connection
+    # (e.g. uvx-based servers that are slow to start). Runs after
+    # gateway.ready so the TUI is responsive immediately.  discover_mcp_tools()
+    # is idempotent and only retries servers not already in _servers.
+    if _has_mcp_servers:
+        def _deferred_mcp_retry():
+            try:
+                time.sleep(10)
+                from tools.mcp_tool import discover_mcp_tools
+                discover_mcp_tools()
+            except Exception:
+                pass
+        t = threading.Thread(target=_deferred_mcp_retry, daemon=True)
+        t.start()
 
     for raw in sys.stdin:
         line = raw.strip()
