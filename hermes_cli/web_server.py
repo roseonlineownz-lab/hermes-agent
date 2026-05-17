@@ -575,6 +575,10 @@ async def get_status():
     # Prefer the detailed health endpoint response (has full state) when the
     # local runtime status file is absent or stale (cross-container).
     runtime = read_runtime_status()
+    if runtime is not None and gateway_pid is not None:
+        runtime_pid = runtime.get("pid")
+        if runtime_pid is not None and str(runtime_pid) != str(gateway_pid):
+            runtime = None
     if runtime is None and remote_health_body and remote_health_body.get("gateway_state"):
         runtime = remote_health_body
 
@@ -603,6 +607,45 @@ async def get_status():
     # ensure we still report the gateway as running (no shared volume scenario).
     if gateway_running and gateway_state is None and remote_health_body is not None:
         gateway_state = "running"
+
+    if gateway_running and configured_gateway_platforms is not None:
+        fallback_updated_at = (
+            gateway_updated_at
+            or (remote_health_body or {}).get("updated_at")
+            or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        )
+        for platform in sorted(configured_gateway_platforms):
+            info = gateway_platforms.get(platform)
+            if not isinstance(info, dict):
+                gateway_platforms[platform] = {
+                    "state": "connected",
+                    "updated_at": fallback_updated_at,
+                }
+                continue
+
+            state = info.get("state")
+            platform_updated_at = info.get("updated_at")
+            stale_disconnected = (
+                state == "disconnected"
+                and (
+                    not isinstance(platform_updated_at, str)
+                    or (
+                        isinstance(gateway_updated_at, str)
+                        and platform_updated_at < gateway_updated_at
+                    )
+                )
+            )
+            if state in {None, ""} or stale_disconnected:
+                reconciled = dict(info)
+                reconciled["state"] = "connected"
+                reconciled["updated_at"] = (
+                    platform_updated_at
+                    if isinstance(platform_updated_at, str)
+                    else fallback_updated_at
+                )
+                reconciled.pop("error_code", None)
+                reconciled.pop("error_message", None)
+                gateway_platforms[platform] = reconciled
 
     active_sessions = 0
     try:
