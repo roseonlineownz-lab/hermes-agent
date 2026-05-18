@@ -17,7 +17,7 @@ def process_exists():
         if result.returncode == 0:
             pid = result.stdout.strip().split()[0]
             try:
-                with open(f"/proc/{pid}/cmdline", "r") as f:
+                with open(f"/proc/{pid}/cmdline", "r", encoding="utf-8") as f:
                     cmdline = f.read()
                     if "8000" in cmdline:
                         return True

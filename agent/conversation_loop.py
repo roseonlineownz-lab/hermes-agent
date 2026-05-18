@@ -852,6 +852,8 @@ def run_conversation(
         primary_recovery_attempted = False
         max_compression_attempts = 3
         codex_auth_retry_attempted=False
+        xai_entitlement_retry_attempted=False
+        agent._entitlement_refresh_attempted = False
         anthropic_auth_retry_attempted=False
         nous_auth_retry_attempted=False
         copilot_auth_retry_attempted=False
@@ -1966,6 +1968,55 @@ def run_conversation(
                         _label = "xAI OAuth" if agent.provider == "xai-oauth" else "Codex"
                         agent._vprint(f"{agent.log_prefix}🔐 {_label} auth refreshed after 401. Retrying request...")
                         continue
+                # xAI OAuth entitlement 403: try one singleton credential
+                # refresh before giving up.  Valid SuperGrok subscriptions
+                # can produce transient entitlement 403s when tokens are
+                # stale.  The credential pool path handles pool-managed
+                # entries; this covers the singleton fallback.
+                if (
+                    agent.provider == "xai-oauth"
+                    and status_code == 403
+                    and not xai_entitlement_retry_attempted
+                    and agent._is_entitlement_failure(error_context, status_code)
+                ):
+                    xai_entitlement_retry_attempted = True
+                    if agent._try_refresh_codex_client_credentials(force=True):
+                        agent._vprint(
+                            f"{agent.log_prefix}🔐 xAI OAuth tokens refreshed after "
+                            f"entitlement 403. Retrying request..."
+                        )
+                        continue
+                    # Refresh didn't help — show diagnostic info.
+                    agent._vprint(
+                        f"{agent.log_prefix}🔐 xAI OAuth entitlement 403 — token "
+                        f"refresh did not resolve the issue.",
+                        force=True,
+                    )
+                    agent._vprint(
+                        f"{agent.log_prefix}   Most likely: SuperGrok subscription "
+                        f"inactive or quota exhausted.",
+                        force=True,
+                    )
+                    agent._vprint(
+                        f"{agent.log_prefix}   Troubleshooting:",
+                        force=True,
+                    )
+                    agent._vprint(
+                        f"{agent.log_prefix}     • Check subscription: https://grok.com/?_s=usage",
+                        force=True,
+                    )
+                    agent._vprint(
+                        f"{agent.log_prefix}     • Reset credentials: hermes auth reset xai-oauth",
+                        force=True,
+                    )
+                    agent._vprint(
+                        f"{agent.log_prefix}     • Re-authenticate: hermes auth add xai-oauth",
+                        force=True,
+                    )
+                    agent._vprint(
+                        f"{agent.log_prefix}     • Clear fallback: hermes fallback clear",
+                        force=True,
+                    )
                 if (
                     agent.api_mode == "chat_completions"
                     and agent.provider == "nous"
