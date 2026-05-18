@@ -466,20 +466,79 @@ def test_is_entitlement_failure_false_for_unrelated_auth_errors():
     assert not AIAgent._is_entitlement_failure(None, 401)
 
 
-def test_recover_with_credential_pool_skips_refresh_on_entitlement_403():
-    """The recovery path must NOT call pool.try_refresh_current() on entitlement 403.
+def test_recover_with_credential_pool_tries_one_refresh_on_xai_entitlement_403():
+    """For xai-oauth, the first entitlement 403 should attempt one token refresh.
 
-    Before the fix, an unsubscribed xAI OAuth account would burn the agent
-    loop indefinitely: refresh → 403 → refresh → 403, infinitely.  With
-    the entitlement guard, recovery returns False so the error surfaces
-    normally with the friendly hint from _summarize_api_error.
+    Valid SuperGrok subscriptions can produce transient entitlement 403s
+    when tokens are stale.  The recovery path should try ONE refresh before
+    giving up, then stop to prevent infinite loops.
     """
     from run_agent import AIAgent
     from agent.error_classifier import FailoverReason
 
     agent = _make_codex_agent()
 
-    # Wire a fake credential pool that records refresh attempts.
+    refresh_calls = {"n": 0}
+
+    class _FakePool:
+        def try_refresh_current(self):
+            refresh_calls["n"] += 1
+            entry = MagicMock()
+            entry.id = "refreshed_entry"
+            return entry
+
+        def mark_exhausted_and_rotate(self, **_kwargs):
+            return None
+
+        def has_available(self):
+            return False
+
+    agent._credential_pool = _FakePool()
+    agent._swap_credential = MagicMock()
+
+    error_context = {
+        "reason": "The caller does not have permission to execute the specified operation",
+        "message": "You have either run out of available resources or do not have an "
+                   "active Grok subscription. Manage at https://grok.com",
+    }
+
+    # First call: should attempt one refresh
+    recovered, _retried_429 = agent._recover_with_credential_pool(
+        status_code=403,
+        has_retried_429=False,
+        classified_reason=FailoverReason.auth,
+        error_context=error_context,
+    )
+
+    assert recovered is True, "First xai-oauth entitlement 403 should attempt refresh"
+    assert refresh_calls["n"] == 1, "try_refresh_current should be called once"
+
+    # Second call: flag is set, should NOT refresh again
+    recovered2, _ = agent._recover_with_credential_pool(
+        status_code=403,
+        has_retried_429=False,
+        classified_reason=FailoverReason.auth,
+        error_context=error_context,
+    )
+
+    assert recovered2 is False, "Second entitlement 403 must surface, not loop"
+    assert refresh_calls["n"] == 1, "try_refresh_current must NOT be called a second time"
+
+
+def test_recover_with_credential_pool_skips_refresh_on_non_xai_entitlement_403():
+    """Non-xai-oauth providers must still skip refresh on entitlement 403.
+
+    The one-refresh-attempt behavior is specific to xai-oauth.  Other
+    providers (or generic entitlement failures) should behave as before:
+    no refresh, surface the error immediately.
+    """
+    from run_agent import AIAgent
+    from agent.error_classifier import FailoverReason
+
+    agent = _make_codex_agent()
+    # Override provider to something non-xai
+    agent.provider = "openai"
+
     refresh_calls = {"n": 0}
 
     class _FakePool:
@@ -508,8 +567,8 @@ def test_recover_with_credential_pool_skips_refresh_on_entitlement_403():
         error_context=error_context,
     )
 
-    assert recovered is False, "Entitlement 403 must surface, not silently recover"
-    assert refresh_calls["n"] == 0, "try_refresh_current must NOT be called on entitlement 403"
+    assert recovered is False, "Non-xai entitlement 403 must surface, not recover"
+    assert refresh_calls["n"] == 0, "try_refresh_current must NOT be called for non-xai providers"
 
 
 def test_recover_with_credential_pool_still_refreshes_genuine_auth_failure():
