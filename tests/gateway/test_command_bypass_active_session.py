@@ -236,6 +236,22 @@ class TestCommandBypassActiveSession:
         )
 
     @pytest.mark.asyncio
+    async def test_start_bypasses_guard(self):
+        """/start should behave like /help for Telegram onboarding."""
+        adapter = _make_adapter()
+        sk = _session_key()
+        adapter._active_sessions[sk] = asyncio.Event()
+
+        await adapter.handle_message(_make_event("/start"))
+
+        assert sk not in adapter._pending_messages, (
+            "/start was queued as a pending message instead of being dispatched"
+        )
+        assert any("handled:help" in r for r in adapter.sent_responses), (
+            "/start was not routed through the help handler"
+        )
+
+    @pytest.mark.asyncio
     async def test_update_bypasses_guard(self):
         """/update must bypass so it is not discarded by the pending-command safety net."""
         adapter = _make_adapter()

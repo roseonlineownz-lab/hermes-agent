@@ -189,6 +189,10 @@ class TestGatewayKnownCommands:
         assert "bg" in GATEWAY_KNOWN_COMMANDS
         assert "background" in GATEWAY_KNOWN_COMMANDS
 
+    def test_start_alias_resolves_to_help_for_messaging_platforms(self):
+        assert resolve_command("start").name == "help"
+        assert "start" in GATEWAY_KNOWN_COMMANDS
+
     def test_is_frozenset(self):
         assert isinstance(GATEWAY_KNOWN_COMMANDS, frozenset)
 
@@ -257,6 +261,14 @@ class TestTelegramBotCommands:
         names = {name for name, _ in telegram_bot_commands()}
         assert "codex_runtime" in names
         assert "codex-runtime" not in names
+
+    def test_help_onboarding_alias_start_is_surface_in_telegram_menu(self):
+        cmds = telegram_bot_commands()
+        names = {name for name, _ in cmds}
+        desc_by_name = dict(cmds)
+        assert "help" in names
+        assert "start" in names
+        assert desc_by_name["start"] == desc_by_name["help"]
 
 
 class TestSlackSubcommandMap:
@@ -366,7 +378,10 @@ class TestSlackNativeSlashes:
         slack_norm = {_norm(n) for n in slack_names}
         tg_norm = {_norm(n) for n in tg_names}
         reserved_norm = {_norm(n) for n in _SLACK_RESERVED_COMMANDS}
-        missing = (tg_norm - slack_norm) - reserved_norm
+        # Telegram surfaces /start as an onboarding alias for /help.
+        # Slack does not need the same conventional entry point, so we
+        # exclude it from the cross-platform parity check.
+        missing = (tg_norm - slack_norm - {"start"}) - reserved_norm
         assert not missing, (
             f"commands on Telegram but missing from Slack native slashes: {sorted(missing)}"
         )
@@ -950,6 +965,12 @@ class TestTelegramMenuCommands:
             assert 1 <= len(name) <= _TG_NAME_LIMIT, (
                 f"Command '{name}' is {len(name)} chars (limit {_TG_NAME_LIMIT})"
             )
+
+    def test_includes_help_onboarding_alias_start(self):
+        menu, _ = telegram_menu_commands(max_commands=100)
+        menu_names = {name for name, _desc in menu}
+        assert "help" in menu_names
+        assert "start" in menu_names
 
     def test_includes_plugin_commands_via_lazy_discovery(self, tmp_path, monkeypatch):
         """Telegram menu generation should discover plugin slash commands on first access."""

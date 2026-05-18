@@ -191,7 +191,8 @@ COMMAND_REGISTRY: list[CommandDef] = [
     # Info
     CommandDef("commands", "Browse all commands and skills (paginated)", "Info",
                gateway_only=True, args_hint="[page]"),
-    CommandDef("help", "Show available commands", "Info"),
+    CommandDef("help", "Show available commands", "Info",
+               aliases=("start",)),
     CommandDef("buddy", "Recommend useful commands for the current CLI state", "Info",
                cli_only=True, args_hint="[topic]",
                subcommands=("busy", "context", "model", "tools", "safe", "goal", "background", "stuck")),
@@ -477,8 +478,10 @@ def telegram_bot_commands() -> list[tuple[str, str]]:
     """Return (command_name, description) pairs for Telegram setMyCommands.
 
     Telegram command names cannot contain hyphens, so they are replaced with
-    underscores.  Aliases are skipped -- Telegram shows one menu entry per
-    canonical command.
+    underscores.  Aliases are skipped for most commands -- Telegram shows one
+    menu entry per canonical command.  The onboarding alias ``/start`` is
+    surfaced alongside ``/help`` so the standard Telegram entry point appears
+    in the bot menu.
 
     Built-in commands that require arguments (e.g. /queue, /steer, /background)
     are **included** because their handlers return usage text when selected
@@ -498,6 +501,8 @@ def telegram_bot_commands() -> list[tuple[str, str]]:
         tg_name = _sanitize_telegram_name(cmd.name)
         if tg_name:
             result.append((tg_name, cmd.description))
+        if cmd.name == "help":
+            result.append(("start", cmd.description))
     for name, description, args_hint in _iter_plugin_command_entries():
         if _requires_argument(args_hint):
             continue

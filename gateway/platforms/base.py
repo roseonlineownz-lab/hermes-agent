@@ -2859,7 +2859,20 @@ class BasePlatformAdapter(ABC):
             # session lifecycle and its cleanup races with the running task
             # (see PR #4926).
             cmd = event.get_command()
-            from hermes_cli.commands import should_bypass_active_session
+            from hermes_cli.commands import (
+                resolve_command as _resolve_cmd,
+                should_bypass_active_session,
+            )
+
+            # Telegram onboarding sends /start, but the gateway help handler
+            # is the canonical target. Normalize only that alias here so the
+            # direct-dispatch path sees the same command name the non-active
+            # session path already uses.
+            _cmd_def = _resolve_cmd(cmd) if cmd else None
+            if _cmd_def is not None and _cmd_def.name == "help" and cmd != "help":
+                user_args = event.get_command_args().strip()
+                event.text = f"/help {user_args}".strip()
+                cmd = "help"
 
             if should_bypass_active_session(cmd):
                 # /stop, /new, /reset must cancel the in-flight adapter task
