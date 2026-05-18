@@ -853,6 +853,7 @@ def run_conversation(
         max_compression_attempts = 3
         codex_auth_retry_attempted=False
         xai_entitlement_retry_attempted=False
+        agent._entitlement_refresh_attempted = False
         anthropic_auth_retry_attempted=False
         nous_auth_retry_attempted=False
         copilot_auth_retry_attempted=False

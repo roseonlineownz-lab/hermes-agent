@@ -636,6 +636,7 @@ def recover_with_credential_pool(
                     "xai-oauth entitlement recovery — pool refresh failed; "
                     "surfacing entitlement error.",
                 )
+                return False, has_retried_429
 
             _ra().logger.info(
                 "Credential %s — entitlement-shaped 403 from %s; "
