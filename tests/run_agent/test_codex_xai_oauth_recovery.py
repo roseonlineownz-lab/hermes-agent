@@ -466,12 +466,12 @@ def test_is_entitlement_failure_false_for_unrelated_auth_errors():
     assert not AIAgent._is_entitlement_failure(None, 401)
 
 
-def test_recover_with_credential_pool_tries_one_refresh_on_xai_entitlement_403():
-    """For xai-oauth, the first entitlement 403 should attempt one token refresh.
+def test_recover_with_credential_pool_skips_refresh_on_xai_entitlement_403():
+    """xai-oauth entitlement 403s must surface without token refresh loops.
 
-    Valid SuperGrok subscriptions can produce transient entitlement 403s
-    when tokens are stale.  The recovery path should try ONE refresh before
-    giving up, then stop to prevent infinite loops.
+    Upstream treats subscription/resource 403s as entitlement failures, not
+    transient auth failures.  Refreshing an OAuth token for the same
+    unsubscribed account only repeats the same 403.
     """
     from run_agent import AIAgent
     from agent.error_classifier import FailoverReason
@@ -502,7 +502,6 @@ def test_recover_with_credential_pool_tries_one_refresh_on_xai_entitlement_403()
                    "active Grok subscription. Manage at https://grok.com",
     }
 
-    # First call: should attempt one refresh
     recovered, _retried_429 = agent._recover_with_credential_pool(
         status_code=403,
         has_retried_429=False,
@@ -510,19 +509,9 @@ def test_recover_with_credential_pool_tries_one_refresh_on_xai_entitlement_403()
         error_context=error_context,
     )
 
-    assert recovered is True, "First xai-oauth entitlement 403 should attempt refresh"
-    assert refresh_calls["n"] == 1, "try_refresh_current should be called once"
-
-    # Second call: flag is set, should NOT refresh again
-    recovered2, _ = agent._recover_with_credential_pool(
-        status_code=403,
-        has_retried_429=False,
-        classified_reason=FailoverReason.auth,
-        error_context=error_context,
-    )
-
-    assert recovered2 is False, "Second entitlement 403 must surface, not loop"
-    assert refresh_calls["n"] == 1, "try_refresh_current must NOT be called a second time"
+    assert recovered is False
+    assert refresh_calls["n"] == 0
+    agent._swap_credential.assert_not_called()
 
 
 def test_recover_with_credential_pool_skips_refresh_on_non_xai_entitlement_403():
