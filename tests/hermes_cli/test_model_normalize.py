@@ -261,3 +261,17 @@ class TestDeepseekCanonicalAndReasonerMapping:
     ])
     def test_unknown_names_fall_back_to_chat(self, model):
         assert _normalize_for_deepseek(model) == "deepseek-chat"
+
+
+class TestXaiLegacyAliases:
+    """Legacy Grok aliases should normalize to live xAI model slugs."""
+
+    @pytest.mark.parametrize("model,expected", [
+        ("grok-beta", "grok-4.3"),
+        ("x-ai/grok-beta", "grok-4.3"),
+        ("xai/grok-beta", "grok-4.3"),
+        ("grok-3-beta", "grok-4.3"),
+        ("grok-4.3", "grok-4.3"),
+    ])
+    def test_xai_deprecated_alias_repair(self, model, expected):
+        assert normalize_model_for_provider(model, "xai-oauth") == expected

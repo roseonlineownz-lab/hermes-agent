@@ -189,6 +189,10 @@ class TestGatewayKnownCommands:
         assert "bg" in GATEWAY_KNOWN_COMMANDS
         assert "background" in GATEWAY_KNOWN_COMMANDS
 
+    def test_start_alias_resolves_to_help_for_messaging_platforms(self):
+        assert resolve_command("start").name == "help"
+        assert "start" in GATEWAY_KNOWN_COMMANDS
+
     def test_is_frozenset(self):
         assert isinstance(GATEWAY_KNOWN_COMMANDS, frozenset)
 

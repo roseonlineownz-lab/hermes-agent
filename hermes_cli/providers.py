@@ -667,7 +667,7 @@ def resolve_provider_full(
     user_providers: Optional[Dict[str, Any]] = None,
     custom_providers: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[ProviderDef]:
-    """Full resolution chain: built-in → models.dev → user config.
+    """Full resolution chain: user override → built-in/models.dev → user-only.
 
     This is the main entry point for --provider flag resolution.
 
@@ -681,26 +681,38 @@ def resolve_provider_full(
     """
     canonical = normalize_provider(name)
 
-    # 1. Built-in (models.dev + overlays)
+    # 1. User-defined provider override from config.yaml.
+    # Allow explicit entries under ``providers:`` to override built-ins with
+    # the same canonical name (for example local ``ollama-cloud`` endpoints).
+    if user_providers:
+        # Try canonical name first.
+        user_pdef = resolve_user_provider(canonical, user_providers)
+        if user_pdef is not None and isinstance(user_providers.get(canonical), dict):
+            return user_pdef
+        # Then try exact user key from original name in case aliases differ.
+        original_key = name.strip().lower()
+        user_pdef = resolve_user_provider(original_key, user_providers)
+        if user_pdef is not None and isinstance(user_providers.get(original_key), dict):
+            return user_pdef
+
+    # 2. Built-in (models.dev + overlays)
     pdef = get_provider(canonical)
     if pdef is not None:
         return pdef
-
-    # 2. User-defined providers from config
-    if user_providers:
-        # Try canonical name
-        user_pdef = resolve_user_provider(canonical, user_providers)
-        if user_pdef is not None:
-            return user_pdef
-        # Try original name (in case alias didn't match)
-        user_pdef = resolve_user_provider(name.strip().lower(), user_providers)
-        if user_pdef is not None:
-            return user_pdef
 
     # 2b. Saved custom providers from config
     custom_pdef = resolve_custom_provider(name, custom_providers)
     if custom_pdef is not None:
         return custom_pdef
+
+    # 2c. User-defined providers from config (non-override names)
+    if user_providers:
+        user_pdef = resolve_user_provider(canonical, user_providers)
+        if user_pdef is not None:
+            return user_pdef
+        user_pdef = resolve_user_provider(name.strip().lower(), user_providers)
+        if user_pdef is not None:
+            return user_pdef
 
     # 3. Try models.dev directly (for providers not in our ALIASES)
     try:

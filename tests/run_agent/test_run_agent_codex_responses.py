@@ -598,6 +598,47 @@ def _build_xai_oauth_agent(monkeypatch):
     return agent
 
 
+def _fake_function_tool(name: str) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": "test tool",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+
+
+def _tool_name(tool_def: dict) -> str:
+    fn = tool_def.get("function")
+    if isinstance(fn, dict) and isinstance(fn.get("name"), str):
+        return fn["name"]
+    name = tool_def.get("name")
+    return name if isinstance(name, str) else ""
+
+
+def test_xai_tool_cap_applies_only_for_xai_provider(monkeypatch):
+    agent = _build_xai_oauth_agent(monkeypatch)
+    agent.tools = [_fake_function_tool(f"tool_{idx:03d}") for idx in range(207)]
+
+    kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
+    tools = kwargs.get("tools") or []
+    assert len(tools) == 200
+    assert _tool_name(tools[0]) == "tool_000"
+    assert _tool_name(tools[-1]) == "tool_199"
+    assert getattr(agent, "_xai_tool_cap_notice_signature", None) is not None
+
+
+def test_non_xai_provider_keeps_full_tool_list(monkeypatch):
+    agent = _build_agent(monkeypatch)
+    agent.tools = [_fake_function_tool(f"tool_{idx:03d}") for idx in range(207)]
+
+    kwargs = agent._build_api_kwargs([{"role": "user", "content": "hi"}])
+    tools = kwargs.get("tools") or []
+    assert len(tools) == 207
+    assert getattr(agent, "_xai_tool_cap_notice_signature", None) is None
+
+
 def test_build_api_kwargs_xai_oauth_sends_cache_key_via_extra_body(monkeypatch):
     """xai-oauth + codex_responses must route prompt caching via the
     ``prompt_cache_key`` body field on /v1/responses (xAI's documented

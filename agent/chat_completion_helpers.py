@@ -63,6 +63,68 @@ from utils import base_url_host_matches, base_url_hostname
 
 logger = logging.getLogger(__name__)
 
+_XAI_MAX_TOOLS_PER_REQUEST = 200
+
+
+def _extract_tool_name(tool_def: Any) -> str:
+    """Best-effort readable tool name for diagnostics."""
+    if isinstance(tool_def, dict):
+        fn = tool_def.get("function")
+        if isinstance(fn, dict):
+            name = fn.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        name = tool_def.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+        t = tool_def.get("type")
+        if isinstance(t, str) and t.strip():
+            return t.strip()
+    return "unknown_tool"
+
+
+def _apply_xai_tool_cap(agent: Any, tools: Any) -> Any:
+    """Cap xAI/Grok function tools to provider maximum.
+
+    xAI function calling accepts at most 200 tools per request. Keep this
+    provider-specific so other backends keep their full tool surface.
+    """
+    if not isinstance(tools, list):
+        return tools
+    if len(tools) <= _XAI_MAX_TOOLS_PER_REQUEST:
+        return tools
+
+    kept = list(tools[:_XAI_MAX_TOOLS_PER_REQUEST])
+    dropped = tools[_XAI_MAX_TOOLS_PER_REQUEST:]
+    dropped_names = [_extract_tool_name(item) for item in dropped]
+    dropped_preview = ", ".join(dropped_names[:8])
+    if len(dropped_names) > 8:
+        dropped_preview += ", ..."
+
+    signature = (len(tools), tuple(dropped_names))
+    if getattr(agent, "_xai_tool_cap_notice_signature", None) != signature:
+        setattr(agent, "_xai_tool_cap_notice_signature", signature)
+        notice = (
+            f"xAI tool cap applied: {len(tools)} → {_XAI_MAX_TOOLS_PER_REQUEST}. "
+            f"Dropped {len(dropped_names)} tool(s): {dropped_preview}"
+        )
+        try:
+            agent._emit_status(f"⚠️ {notice}")
+        except Exception:
+            pass
+        try:
+            agent._vprint(f"{getattr(agent, 'log_prefix', '')}⚠️ {notice}", force=True)
+        except Exception:
+            pass
+        logger.warning(
+            "%sxAI tool cap applied (%s -> %s); dropped %s tools",
+            getattr(agent, "log_prefix", ""),
+            len(tools),
+            _XAI_MAX_TOOLS_PER_REQUEST,
+            len(dropped_names),
+        )
+    return kept
+
 
 def _ra():
     """Lazy ``run_agent`` reference.
@@ -233,6 +295,11 @@ def interruptible_api_call(agent, api_kwargs: dict):
 def build_api_kwargs(agent, api_messages: list) -> dict:
     """Build the keyword arguments dict for the active API mode."""
     tools_for_api = agent.tools
+    _provider = str(getattr(agent, "provider", "") or "").strip().lower()
+    _base_host = base_url_hostname(str(getattr(agent, "base_url", "") or ""))
+    _is_xai_provider = _provider in {"xai", "xai-oauth"} or _base_host == "api.x.ai"
+    if _is_xai_provider:
+        tools_for_api = _apply_xai_tool_cap(agent, tools_for_api)
 
     if agent.api_mode == "anthropic_messages":
         _transport = agent._get_transport()
