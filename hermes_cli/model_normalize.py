@@ -116,26 +116,6 @@ _LOWERCASE_MODEL_PROVIDERS: frozenset[str] = frozenset({
 })
 
 # ---------------------------------------------------------------------------
-# xAI / Grok special handling
-# ---------------------------------------------------------------------------
-# Keep common legacy slugs working across Hermes entrypoints. Some historical
-# xAI aliases (notably ``grok-beta``) can now fail hard on the API surface
-# with 404 deprecation errors instead of redirecting automatically.
-_XAI_DEPRECATED_ALIASES: dict[str, str] = {
-    "grok-beta": "grok-4.3",
-    "grok-3-beta": "grok-4.3",
-}
-
-
-def _normalize_for_xai(model_name: str) -> str:
-    """Normalize xAI model names and heal deprecated aliases."""
-    bare = _strip_vendor_prefix(model_name).strip()
-    if not bare:
-        return bare
-    mapped = _XAI_DEPRECATED_ALIASES.get(bare.lower())
-    return mapped or bare
-
-# ---------------------------------------------------------------------------
 # DeepSeek special handling
 # ---------------------------------------------------------------------------
 # DeepSeek's API only recognises exactly two model identifiers.  We map
@@ -413,13 +393,6 @@ def normalize_model_for_provider(model_input: str, target_provider: str) -> str:
     if provider in _AGGREGATOR_PROVIDERS:
         return _prepend_vendor(name)
 
-    # --- xAI / xAI OAuth: keep bare model ids and repair deprecated aliases.
-    #     We intentionally do this before generic prefix stripping so both
-    #     ``x-ai/grok-...`` and ``xai/grok-...`` inputs normalize the same.
-    if provider in {"xai", "xai-oauth"}:
-        bare = _strip_matching_provider_prefix(name, provider)
-        return _normalize_for_xai(bare)
-
     # --- OpenCode Zen / OpenCode Go: flat-namespace resellers.
     #     Their /v1/models API returns bare IDs only (no vendor prefix), and
     #     the inference endpoint rejects vendor-prefixed names with HTTP 401
@@ -497,3 +470,4 @@ def normalize_model_for_provider(model_input: str, target_provider: str) -> str:
 # ---------------------------------------------------------------------------
 # Batch / convenience helpers
 # ---------------------------------------------------------------------------
+
