@@ -1465,6 +1465,9 @@ class GatewayRunner:
         self._running_agents: Dict[str, Any] = {}
         self._running_agents_ts: Dict[str, float] = {}  # start timestamp per session
         self._pending_messages: Dict[str, str] = {}  # Queued messages during interrupt
+        # Rate-limit repeated user-visible status notices (drain/restart/long-run)
+        # to keep Discord/Telegram channels readable during transient flaps.
+        self._status_notice_ts: Dict[str, float] = {}
         # Overflow buffer for explicit /queue commands.  The adapter-level
         # _pending_messages dict is a single slot per session (designed for
         # "next-turn" follow-ups where repeated sends collapse into one
@@ -2299,6 +2302,49 @@ class GatewayRunner:
         # process to pick up.  "interrupt" mode drops them (current behaviour).
         return self._restart_requested and self._busy_input_mode in {"queue", "steer"}
 
+    def _status_notice_key(
+        self,
+        kind: str,
+        source: Optional["SessionSource"] = None,
+        session_key: Optional[str] = None,
+    ) -> str:
+        """Build a stable dedup key for transient user-visible status notices."""
+        platform = "unknown"
+        chat_id = "unknown"
+        thread_id = ""
+        if source is not None:
+            try:
+                platform = source.platform.value if source.platform else "unknown"
+                chat_id = str(source.chat_id)
+                thread_id = str(source.thread_id or "")
+            except Exception:
+                pass
+        elif session_key:
+            parsed = _parse_session_key(session_key) or {}
+            platform = str(parsed.get("platform") or platform)
+            chat_id = str(parsed.get("chat_id") or chat_id)
+            thread_id = str(parsed.get("thread_id") or "")
+        return f"{kind}:{platform}:{chat_id}:{thread_id}"
+
+    def _should_emit_status_notice(self, key: str, cooldown_seconds: float) -> bool:
+        """Return True when a status notice should be sent, with cooldown dedup."""
+        cooldown = max(0.0, float(cooldown_seconds))
+        if cooldown <= 0:
+            return True
+        now = time.time()
+        last = float(self._status_notice_ts.get(key, 0.0) or 0.0)
+        if (now - last) < cooldown:
+            return False
+        self._status_notice_ts[key] = now
+        if len(self._status_notice_ts) > 4096:
+            # Keep memory bounded during long-lived runtimes.
+            cutoff = now - max(60.0, cooldown * 4.0)
+            self._status_notice_ts = {
+                k: ts for k, ts in self._status_notice_ts.items()
+                if ts >= cutoff
+            }
+        return True
+
     # -------- /queue FIFO helpers --------------------------------------
     # /queue must produce one full agent turn per invocation, in FIFO
     # order, with no merging.  The adapter's _pending_messages dict is a
@@ -2858,6 +2904,14 @@ class GatewayRunner:
             adapter = self.adapters.get(event.source.platform)
             if not adapter:
                 return True
+            _drain_notice_key = self._status_notice_key(
+                "drain-busy",
+                source=event.source,
+                session_key=session_key,
+            )
+            if not self._should_emit_status_notice(_drain_notice_key, 45.0):
+                logger.debug("Drain busy notice suppressed for session %s", session_key)
+                return True
 
             reply_anchor = self._reply_anchor_for_event(event)
             thread_meta = self._thread_metadata_for_source(event.source, reply_anchor)
@@ -3128,6 +3182,17 @@ class GatewayRunner:
             # destinations via metadata.
             dedup_key = (platform_str, chat_id, str(thread_id) if thread_id else None)
             if dedup_key in notified:
+                continue
+            _shutdown_notice_key = (
+                f"shutdown:{action}:{platform_str}:{chat_id}:{str(thread_id) if thread_id else ''}"
+            )
+            if not self._should_emit_status_notice(_shutdown_notice_key, 180.0):
+                logger.debug(
+                    "Shutdown notice suppressed by cooldown for %s/%s/%s",
+                    platform_str,
+                    chat_id,
+                    thread_id,
+                )
                 continue
 
             try:
@@ -7017,6 +7082,14 @@ class GatewayRunner:
             if self._draining:
                 if self._queue_during_drain_enabled():
                     self._queue_or_replace_pending_event(_quick_key, event)
+                _drain_notice_key = self._status_notice_key(
+                    "drain-priority",
+                    source=source,
+                    session_key=_quick_key,
+                )
+                if not self._should_emit_status_notice(_drain_notice_key, 45.0):
+                    logger.debug("Priority drain notice suppressed for session %s", _quick_key)
+                    return None
                 return (
                     f"⏳ Gateway {self._status_action_gerund()} — queued for the next turn after it comes back."
                     if self._queue_during_drain_enabled()
@@ -17058,6 +17131,11 @@ class GatewayRunner:
         # 0 = disable notifications.
         _NOTIFY_INTERVAL_RAW = _float_env("HERMES_AGENT_NOTIFY_INTERVAL", 180)
         _NOTIFY_INTERVAL = _NOTIFY_INTERVAL_RAW if _NOTIFY_INTERVAL_RAW > 0 else None
+        # Discord rooms get noisy fast with periodic "still working" updates.
+        # Keep the signal, but slow it down by default unless user explicitly
+        # sets a higher-frequency interval.
+        if _NOTIFY_INTERVAL is not None and source.platform == Platform.DISCORD:
+            _NOTIFY_INTERVAL = max(_NOTIFY_INTERVAL, 420.0)  # 7 minutes
         _notify_start = time.time()
 
         async def _notify_long_running():
