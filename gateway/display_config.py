@@ -33,6 +33,7 @@ from typing import Any
 _GLOBAL_DEFAULTS: dict[str, Any] = {
     "tool_progress": "all",
     "show_reasoning": False,
+    "strict_mode": False,
     "tool_preview_length": 0,
     "streaming": None,  # None = follow top-level streaming config
     # When true, delete tool-progress / "Still working..." / status bubbles
@@ -54,6 +55,7 @@ _GLOBAL_DEFAULTS: dict[str, Any] = {
 _TIER_HIGH = {
     "tool_progress": "all",
     "show_reasoning": False,
+    "strict_mode": False,
     "tool_preview_length": 40,
     "streaming": None,  # follow global
 }
@@ -61,6 +63,7 @@ _TIER_HIGH = {
 _TIER_MEDIUM = {
     "tool_progress": "new",
     "show_reasoning": False,
+    "strict_mode": False,
     "tool_preview_length": 40,
     "streaming": None,
 }
@@ -68,6 +71,7 @@ _TIER_MEDIUM = {
 _TIER_LOW = {
     "tool_progress": "off",
     "show_reasoning": False,
+    "strict_mode": False,
     "tool_preview_length": 40,
     "streaming": False,
 }
@@ -75,6 +79,7 @@ _TIER_LOW = {
 _TIER_MINIMAL = {
     "tool_progress": "off",
     "show_reasoning": False,
+    "strict_mode": False,
     "tool_preview_length": 0,
     "streaming": False,
 }

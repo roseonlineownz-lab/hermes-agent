@@ -122,6 +122,7 @@ from tools.browser_tool import cleanup_browser
 # Agent internals extracted to agent/ package for modularity
 from agent.memory_manager import StreamingContextScrubber, build_memory_context_block, sanitize_context
 from agent.think_scrubber import StreamingThinkScrubber
+from agent.strict_guard import get_strict_mode, filter_meta_commentary
 from agent.retry_utils import jittered_backoff
 from agent.error_classifier import classify_api_error, FailoverReason
 from agent.prompt_builder import (
@@ -3021,6 +3022,10 @@ class AIAgent:
             else:
                 # Defensive: legacy callers without the scrubber attribute.
                 text = self._strip_think_blocks(text or "")
+            # Strict mode: filter meta-commentary patterns from streamed output
+            if get_strict_mode():
+                text = filter_meta_commentary(text)
+
             # Then feed through the stateful context scrubber so memory-context
             # spans split across chunks cannot leak to the UI (#5719).
             scrubber = getattr(self, "_stream_context_scrubber", None)

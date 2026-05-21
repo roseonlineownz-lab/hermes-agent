@@ -70,6 +70,7 @@ from tools.schema_sanitizer import strip_pattern_and_format
 from tools.skill_provenance import set_current_write_origin
 from utils import base_url_host_matches, env_var_enabled
 
+from agent.strict_guard import get_strict_mode, strict_filter
 logger = logging.getLogger(__name__)
 
 
@@ -2982,10 +2983,13 @@ def run_conversation(
 
             # Handle assistant response
             if assistant_message.content and not agent.quiet_mode:
+                _display_content = assistant_message.content
+                if get_strict_mode():
+                    _display_content = strict_filter(_display_content)
                 if agent.verbose_logging:
-                    agent._vprint(f"{agent.log_prefix}🤖 Assistant: {assistant_message.content}")
+                    agent._vprint(f"{agent.log_prefix}🤖 Assistant: {_display_content}")
                 else:
-                    agent._vprint(f"{agent.log_prefix}🤖 Assistant: {assistant_message.content[:100]}{'...' if len(assistant_message.content) > 100 else ''}")
+                    agent._vprint(f"{agent.log_prefix}🤖 Assistant: {_display_content[:100]}{'...' if len(_display_content) > 100 else ''}")
 
             # Notify progress callback of model's thinking (used by subagent
             # delegation to relay the child's reasoning to the parent display).
