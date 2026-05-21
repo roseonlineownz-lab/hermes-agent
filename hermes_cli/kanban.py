@@ -807,16 +807,25 @@ def kanban_command(args: argparse.Namespace) -> int:
     """
     action = getattr(args, "kanban_action", None)
     if not action:
-        # No subaction given: print help via the stored parser reference.
-        parser = getattr(args, "_kanban_parser", None)
-        if parser is not None:
-            parser.print_help()
-        else:
-            print(
-                "usage: hermes kanban <action> [options]\n"
-                "Run 'hermes kanban --help' for the full list of actions.",
-                file=sys.stderr,
-            )
+        # No subaction given: print a beautiful, user-friendly help screen for Discord/TUI/CLI
+        print(
+            "📋 **NOVA-KANBAN QUICK START & EXAMPLES**\n\n"
+            "🤖 **Quick Start:**\n"
+            "• `/kanban boards list` — Toon alle actieve projectboards en status.\n"
+            "• `/kanban boards create <name>` — Maak een nieuw projectboard aan.\n"
+            "• `/kanban create <title> [--assignee <role>]` — Voeg een nieuwe taak toe.\n"
+            "• `/kanban list` — Toon alle open taken op het huidige board.\n\n"
+            "💡 **Voorbeelden:**\n"
+            "• `/kanban create \"Optimize database indexes\" --assignee developer`\n"
+            "• `/kanban show T001` — Bekijk details, opmerkingen en blokkades van taak T001.\n"
+            "• `/kanban comment T001 \"Index created, performance improved by 40%\"`\n"
+            "• `/kanban complete T001` — Sluit de taak succesvol af.\n\n"
+            "📅 **Secretary & Meeting Block:**\n"
+            "• `/kanban create \"Notuleer standup meeting van vandaag\" --assignee secretary`\n"
+            "• `/kanban create \"Volg actiepunten van de brainstorm op\" --assignee secretary`\n"
+            "• `/kanban link T002 T001` — Koppel een actiepunt aan een meeting-notule.\n\n"
+            "ℹ️ *Gebruik `/kanban boards switch <slug>` om van projectboard te wisselen.*"
+        )
         return 0
 
     # Board-management commands operate on board metadata and the persisted
