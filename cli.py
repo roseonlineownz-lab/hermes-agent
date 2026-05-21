@@ -738,7 +738,7 @@ from tools.terminal_tool import set_sudo_password_callback, set_approval_callbac
 from tools.skills_tool import set_secret_capture_callback
 from hermes_cli.callbacks import prompt_for_secret
 from tools.browser_tool import _emergency_cleanup_all_sessions as _cleanup_all_browsers
-from agent.strict_guard import toggle_strict_mode, set_strict_mode
+from agent.strict_guard import load_strict_config, toggle_strict_mode
 
 # Guard to prevent cleanup from running multiple times on exit
 _cleanup_done = False
@@ -2654,8 +2654,7 @@ class HermesCLI:
         # show_reasoning: display model thinking/reasoning before the response
         self.show_reasoning = CLI_CONFIG["display"].get("show_reasoning", False)
         # strict_mode: filter visible thinking/meta-commentary from output
-        if CLI_CONFIG["display"].get("strict_mode", False):
-            set_strict_mode(True)
+        load_strict_config(CLI_CONFIG)
         _configure_output_history(
             enabled=CLI_CONFIG["display"].get("persistent_output", True),
             max_lines=CLI_CONFIG["display"].get("persistent_output_max_lines", 200),
@@ -8048,11 +8047,13 @@ class HermesCLI:
             self._handle_footer_command(cmd_original)
         elif canonical == "yolo":
             self._toggle_yolo()
-            save_config_value("display.strict_mode", enabled)
         elif canonical == "strict" or canonical == "clean":
             enabled = toggle_strict_mode()
             state = "ON (no visible thinking/meta)" if enabled else "OFF"
-            self._console_print(f"  Strict output mode: {state}  (saved)")
+            if save_config_value("display.strict_mode", enabled):
+                self._console_print(f"  Strict output mode: {state}  (saved)")
+            else:
+                self._console_print(f"  Strict output mode: {state}  (session only)")
         elif canonical == "reasoning":
             self._handle_reasoning_command(cmd_original)
         elif canonical == "fast":

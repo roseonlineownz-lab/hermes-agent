@@ -9,9 +9,9 @@ from final assistant output. Designed to be wired into:
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import List, Tuple
-import logging
 
 # ---------------------------------------------------------------------------
 # Global strict-mode toggle (per-process; set by /strict slash command)
@@ -81,6 +81,10 @@ BLOCK_PATTERNS: List[Tuple[str, str, str]] = [
     (r"<REASONING_SCRATCHPAD>.*?</REASONING_SCRATCHPAD>", "", "xml-scratchpad-block"),
 ]
 
+CompiledRegex = tuple[re.Pattern[str], str, str]
+_LINE_REGEX_CACHE: list[CompiledRegex] | None = None
+_BLOCK_REGEX_CACHE: list[CompiledRegex] | None = None
+
 
 def load_strict_config(config=None):
     """Load strict mode setting from config at startup."""
@@ -94,23 +98,23 @@ def load_strict_config(config=None):
             pass
     else:
         enabled = bool(config.get("display", {}).get("strict_mode", False))
-    if enabled:
-        set_strict_mode(True)
+    set_strict_mode(enabled)
     return get_strict_mode()
 
 
-def _compile_patterns():
+def _compile_patterns() -> tuple[list[CompiledRegex], list[CompiledRegex]]:
     """Lazily compile regex patterns."""
-    if not hasattr(_compile_patterns, "_line_regexes"):
-        _compile_patterns._line_regexes = [
+    global _LINE_REGEX_CACHE, _BLOCK_REGEX_CACHE
+    if _LINE_REGEX_CACHE is None or _BLOCK_REGEX_CACHE is None:
+        _LINE_REGEX_CACHE = [
             (re.compile(pat, re.MULTILINE | re.IGNORECASE), repl, desc)
             for pat, repl, desc in LINE_PATTERNS
         ]
-        _compile_patterns._block_regexes = [
+        _BLOCK_REGEX_CACHE = [
             (re.compile(pat, re.MULTILINE | re.IGNORECASE | re.DOTALL), repl, desc)
             for pat, repl, desc in BLOCK_PATTERNS
         ]
-    return _compile_patterns._line_regexes, _compile_patterns._block_regexes
+    return _LINE_REGEX_CACHE, _BLOCK_REGEX_CACHE
 
 
 def filter_meta_commentary(text: str) -> str:
@@ -119,8 +123,10 @@ def filter_meta_commentary(text: str) -> str:
     Applies line-level and block-level regex patterns in order.
     Returns cleaned text with normalized whitespace.
     """
-    if not text or not text.strip():
+    if not text:
         return text
+    if not text.strip():
+        return ""
 
     line_regexes, block_regexes = _compile_patterns()
 
@@ -147,16 +153,17 @@ def strict_filter(text: str) -> str:
     Use this for complete (non-streaming) assistant messages.
     For streaming, use filter_meta_commentary() after the existing think scrubber.
     """
-    if not text or not text.strip():
+    if not text:
         return text
+    if not text.strip():
+        return ""
 
     # Step 1: Use StreamingThinkScrubber to handle nested/incomplete XML tags
     try:
         from agent.think_scrubber import StreamingThinkScrubber
 
         scrubber = StreamingThinkScrubber()
-        scrubber.feed(text)
-        text = scrubber.flush()
+        text = scrubber.feed(text) + scrubber.flush()
     except Exception:
         # Defensive: if scrubber fails, fall through to regex-only
         pass

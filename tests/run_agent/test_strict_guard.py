@@ -33,6 +33,18 @@ class TestStrictModeToggle:
         result = toggle_strict_mode()
         assert result is False
 
+    def test_load_strict_config_turns_on_when_enabled(self):
+        set_strict_mode(False)
+        result = load_strict_config({"display": {"strict_mode": True}})
+        assert result is True
+        assert get_strict_mode() is True
+
+    def test_load_strict_config_turns_off_when_disabled(self):
+        set_strict_mode(True)
+        result = load_strict_config({"display": {"strict_mode": False}})
+        assert result is False
+        assert get_strict_mode() is False
+
 
 class TestFilterMetaCommentary:
     def test_empty_string(self):
@@ -88,32 +100,27 @@ class TestFilterMetaCommentary:
         assert result.strip() == ""
 
     def test_strips_progress_note(self):
-        result = filter_meta_commentary("Progress note: checking things.
-Actual result.")
+        result = filter_meta_commentary("Progress note: checking things.\nActual result.")
         assert "Progress note" not in result
         assert "Actual result." in result
 
     def test_strips_key_insight(self):
-        result = filter_meta_commentary("Key insight: something important.
-Here is the data.")
+        result = filter_meta_commentary("Key insight: something important.\nHere is the data.")
         assert "Key insight" not in result
         assert "Here is the data." in result
 
     def test_strips_let_me_extended(self):
-        result = filter_meta_commentary("Let me check the facts.
-Final: 42")
+        result = filter_meta_commentary("Let me check the facts.\nFinal: 42")
         assert "Let me check" not in result
         assert "Final: 42" in result
 
     def test_strips_i_should_note(self):
-        result = filter_meta_commentary("I should mention this nuance.
-The answer is clear.")
+        result = filter_meta_commentary("I should mention this nuance.\nThe answer is clear.")
         assert "I should mention" not in result
         assert "The answer is clear." in result
 
     def test_strips_based_on_preamble(self):
-        result = filter_meta_commentary("Based on the above analysis,
-42 is the answer.")
+        result = filter_meta_commentary("Based on the above analysis,\n42 is the answer.")
         assert "Based on the above" not in result
         assert "42 is the answer." in result
 
