@@ -10,7 +10,9 @@ Uses discord.py library for:
 """
 
 import asyncio
+import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -21,6 +23,7 @@ import threading
 import time
 from collections import defaultdict
 from typing import Callable, Dict, List, Optional, Any, Tuple
+from urllib.parse import quote_plus
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,7 @@ _DISCORD_COMMAND_SYNC_STATE_SUBDIR = "gateway"
 _DISCORD_COMMAND_SYNC_STATE_FILENAME = "discord_command_sync_state.json"
 _DISCORD_COMMAND_SYNC_MUTATION_INTERVAL_SECONDS = 4.5
 _DISCORD_COMMAND_SYNC_MAX_RATE_LIMIT_SLEEP_SECONDS = 30.0
+_LIVEKIT_MEET_BASE_URL = "https://meet.livekit.io/custom"
 
 try:
     import discord
@@ -148,6 +152,66 @@ def _build_allowed_mentions():
         users=_b("DISCORD_ALLOW_MENTION_USERS", True),
         replied_user=_b("DISCORD_ALLOW_MENTION_REPLIED_USER", True),
     )
+
+
+def _livekit_b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _mint_livekit_access_token(
+    room: str,
+    identity: str,
+    *,
+    name: str | None = None,
+    ttl_seconds: int = 3600,
+    can_publish: bool = True,
+    can_subscribe: bool = True,
+) -> dict[str, Any]:
+    """Mint a short-lived LiveKit participant token from environment vars."""
+    url = os.getenv("LIVEKIT_URL", "").strip()
+    key = os.getenv("LIVEKIT_API_KEY", "").strip()
+    secret = os.getenv("LIVEKIT_API_SECRET", "").strip()
+    missing = [k for k, v in {
+        "LIVEKIT_URL": url,
+        "LIVEKIT_API_KEY": key,
+        "LIVEKIT_API_SECRET": secret,
+    }.items() if not v]
+    if missing:
+        raise RuntimeError(f"Missing LiveKit env: {', '.join(missing)}")
+
+    now = int(time.time())
+    payload = {
+        "iss": key,
+        "sub": identity,
+        "name": name or identity,
+        "iat": now,
+        "nbf": now,
+        "exp": now + max(60, int(ttl_seconds)),
+        "video": {
+            "room": room,
+            "roomJoin": True,
+            "canPublish": bool(can_publish),
+            "canSubscribe": bool(can_subscribe),
+        },
+    }
+    header = {"alg": "HS256", "typ": "JWT"}
+    header_b64 = _livekit_b64url(json.dumps(header, separators=(",", ":")).encode())
+    payload_b64 = _livekit_b64url(json.dumps(payload, separators=(",", ":")).encode())
+    signature = hmac.new(
+        secret.encode(), f"{header_b64}.{payload_b64}".encode(), hashlib.sha256
+    ).digest()
+    return {
+        "ok": True,
+        "url": url,
+        "token": f"{header_b64}.{payload_b64}.{_livekit_b64url(signature)}",
+        "expires_at": payload["exp"],
+    }
+
+
+def _livekit_meeting_url(*, livekit_url: str, token: str) -> str:
+    """Build a LiveKit Meet URL. Token is intentionally only in the URL."""
+    base_url = os.getenv("LIVEKIT_MEET_BASE_URL", _LIVEKIT_MEET_BASE_URL).strip() or _LIVEKIT_MEET_BASE_URL
+    return f"{base_url}?liveKitUrl={quote_plus(livekit_url)}&token={quote_plus(token)}"
 
 
 class VoiceReceiver:
@@ -2906,6 +2970,55 @@ class DiscordAdapter(BasePlatformAdapter):
         except Exception as e:
             logger.debug("Discord interaction cleanup failed: %s", e)
 
+    async def _handle_meeting_slash(
+        self,
+        interaction: discord.Interaction,
+        room: str = "",
+        title: str = "",
+    ) -> None:
+        """Create a LiveKit meeting link and post it as a Discord button."""
+        if not await self._check_slash_authorization(interaction, "/meeting"):
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        safe_room = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", (room or "voice_room").strip()).strip("-")
+        safe_room = safe_room[:64] or "voice_room"
+        display_title = (title or "NovaMaster agent meeting").strip()[:80]
+        user_id = str(getattr(interaction.user, "id", "user"))
+        username = getattr(interaction.user, "display_name", None) or getattr(interaction.user, "name", "human")
+
+        try:
+            token_info = _mint_livekit_access_token(
+                safe_room,
+                f"discord-{user_id}",
+                name=username,
+                ttl_seconds=int(os.getenv("LIVEKIT_MEETING_TTL_SECONDS", "3600") or "3600"),
+            )
+            meeting_url = _livekit_meeting_url(
+                livekit_url=token_info["url"],
+                token=token_info["token"],
+            )
+        except Exception as e:
+            logger.warning("[Discord] meeting link creation failed: %s", e, exc_info=True)
+            await interaction.edit_original_response(
+                content="Ik kon de meeting niet starten. LiveKit config ontbreekt of token maken faalde."
+            )
+            return
+
+        view = discord.ui.View(timeout=3600)
+        view.add_item(discord.ui.Button(label="Join meeting", style=discord.ButtonStyle.link, url=meeting_url))
+        content = (
+            f"**{display_title}**\n"
+            f"Room: `{safe_room}`\n"
+            "Klik op de knop om de agent meeting te openen."
+        )
+        try:
+            await interaction.channel.send(content=content, view=view)
+            await interaction.edit_original_response(content="Meeting knop geplaatst.")
+        except Exception as e:
+            logger.warning("[Discord] meeting button send failed: %s", e, exc_info=True)
+            await interaction.edit_original_response(content=f"Meeting link: {meeting_url}")
+
     def _register_slash_commands(self) -> None:
         """Register Discord slash commands on the command tree."""
         if not self._client:
@@ -2995,6 +3108,14 @@ class DiscordAdapter(BasePlatformAdapter):
         @tree.command(name="reload-skills", description="Re-scan ~/.hermes/skills/ for new or removed skills")
         async def slash_reload_skills(interaction: discord.Interaction):
             await self._run_simple_slash(interaction, "/reload-skills")
+
+        @tree.command(name="meeting", description="Post a LiveKit agent meeting button")
+        @discord.app_commands.describe(
+            room="LiveKit room name. Default: voice_room",
+            title="Meeting title shown in Discord",
+        )
+        async def slash_meeting(interaction: discord.Interaction, room: str = "", title: str = ""):
+            await self._handle_meeting_slash(interaction, room, title)
 
         @tree.command(name="voice", description="Toggle voice reply mode")
         @discord.app_commands.describe(mode="Voice mode: join, channel, leave, on, tts, off, or status")
