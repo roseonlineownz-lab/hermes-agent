@@ -1477,6 +1477,7 @@ class GatewayRunner:
         self._queued_events: Dict[str, List[MessageEvent]] = {}
         self._pending_native_image_paths_by_session: Dict[str, List[str]] = {}
         self._busy_ack_ts: Dict[str, float] = {}  # last busy-ack timestamp per session (debounce)
+        self._status_notice_ts: Dict[str, float] = {}  # last status notice timestamp per key
         self._session_run_generation: Dict[str, int] = {}
         # LRU cache of live SessionSources keyed by session_key. Used by
         # fallback routing paths (shutdown notifications, synthetic
@@ -2293,6 +2294,33 @@ class GatewayRunner:
     def _status_action_gerund(self) -> str:
         return "restarting" if self._restart_requested else "shutting down"
 
+    def _status_notice_key(
+        self,
+        kind: str,
+        *,
+        platform: Optional[str] = None,
+        chat_id: Optional[str] = None,
+        thread_id: Optional[str] = None,
+        session_key: str = "",
+    ) -> str:
+        return "|".join(
+            [
+                kind,
+                platform or "",
+                chat_id or "",
+                thread_id or "",
+                session_key or "",
+            ]
+        )
+
+    def _status_notice_allowed(self, key: str, cooldown_seconds: float) -> bool:
+        now = time.time()
+        last = self._status_notice_ts.get(key, 0.0)
+        return (now - last) >= max(0.0, float(cooldown_seconds))
+
+    def _mark_status_notice(self, key: str) -> None:
+        self._status_notice_ts[key] = time.time()
+
     def _queue_during_drain_enabled(self) -> bool:
         # Both "queue" and "steer" modes imply the user doesn't want messages
         # to be lost during restart — queue them for the newly-spawned gateway
@@ -2867,18 +2895,27 @@ class GatewayRunner:
             else:
                 message = f"⏳ Gateway is {self._status_action_gerund()} and is not accepting another turn right now."
 
-            await adapter._send_with_retry(
-                chat_id=event.source.chat_id,
-                content=message,
-                reply_to=(
-                    reply_anchor
-                    if event.source.platform == Platform.TELEGRAM
-                    and event.source.chat_type == "dm"
-                    and event.source.thread_id
-                    else (None if event.source.platform == Platform.TELEGRAM and event.source.thread_id else event.message_id)
-                ),
-                metadata=thread_meta,
+            notice_key = self._status_notice_key(
+                "drain-busy",
+                platform=event.source.platform.value if event.source.platform else "unknown",
+                chat_id=str(event.source.chat_id),
+                thread_id=str(event.source.thread_id) if event.source.thread_id else "",
+                session_key=session_key,
             )
+            if self._status_notice_allowed(notice_key, 45):
+                await adapter._send_with_retry(
+                    chat_id=event.source.chat_id,
+                    content=message,
+                    reply_to=(
+                        reply_anchor
+                        if event.source.platform == Platform.TELEGRAM
+                        and event.source.chat_type == "dm"
+                        and event.source.thread_id
+                        else (None if event.source.platform == Platform.TELEGRAM and event.source.thread_id else event.message_id)
+                    ),
+                    metadata=thread_meta,
+                )
+                self._mark_status_notice(notice_key)
             return True
 
         # Normal busy case (agent actively running a task)
@@ -3147,6 +3184,15 @@ class GatewayRunner:
                 # Include thread_id if present so the message lands in the
                 # correct forum topic / thread.
                 metadata = {"thread_id": thread_id} if thread_id else None
+                notice_key = self._status_notice_key(
+                    "shutdown-active",
+                    platform=platform_str,
+                    chat_id=chat_id,
+                    thread_id=str(thread_id) if thread_id else "",
+                    session_key=action,
+                )
+                if not self._status_notice_allowed(notice_key, 180):
+                    continue
 
                 result = await adapter.send(chat_id, msg, metadata=metadata)
                 if result is not None and getattr(result, "success", True) is False:
@@ -3159,6 +3205,7 @@ class GatewayRunner:
                     continue
 
                 notified.add(dedup_key)
+                self._mark_status_notice(notice_key)
                 logger.info(
                     "Sent shutdown notification to active chat %s:%s",
                     platform_str, chat_id,
@@ -3193,6 +3240,15 @@ class GatewayRunner:
 
             try:
                 metadata = {"thread_id": home.thread_id} if home.thread_id else None
+                notice_key = self._status_notice_key(
+                    "shutdown-home",
+                    platform=platform.value,
+                    chat_id=str(home.chat_id),
+                    thread_id=str(home.thread_id) if home.thread_id else "",
+                    session_key=action,
+                )
+                if not self._status_notice_allowed(notice_key, 180):
+                    continue
                 if metadata:
                     result = await adapter.send(str(home.chat_id), msg, metadata=metadata)
                 else:
@@ -3207,6 +3263,7 @@ class GatewayRunner:
                     continue
 
                 notified.add(dedup_key)
+                self._mark_status_notice(notice_key)
                 logger.info(
                     "Sent shutdown notification to home channel %s:%s",
                     platform.value,
@@ -7017,6 +7074,16 @@ class GatewayRunner:
             if self._draining:
                 if self._queue_during_drain_enabled():
                     self._queue_or_replace_pending_event(_quick_key, event)
+                _notice_key = self._status_notice_key(
+                    "drain-priority",
+                    platform=source.platform.value if source and source.platform else "unknown",
+                    chat_id=str(source.chat_id) if source else "",
+                    thread_id=str(source.thread_id) if source and source.thread_id else "",
+                    session_key=_quick_key,
+                )
+                if not self._status_notice_allowed(_notice_key, 45):
+                    return None
+                self._mark_status_notice(_notice_key)
                 return (
                     f"⏳ Gateway {self._status_action_gerund()} — queued for the next turn after it comes back."
                     if self._queue_during_drain_enabled()
@@ -7313,6 +7380,16 @@ class GatewayRunner:
             return await self._handle_voice_command(event)
 
         if self._draining:
+            _notice_key = self._status_notice_key(
+                "drain-command",
+                platform=event.source.platform.value if event.source and event.source.platform else "unknown",
+                chat_id=str(event.source.chat_id) if event.source else "",
+                thread_id=str(event.source.thread_id) if event.source and event.source.thread_id else "",
+                session_key=event.session_key if getattr(event, "session_key", "") else "",
+            )
+            if not self._status_notice_allowed(_notice_key, 45):
+                return None
+            self._mark_status_notice(_notice_key)
             return f"⏳ Gateway is {self._status_action_gerund()} and is not accepting new work right now."
 
         # User-defined quick commands (bypass agent loop, no LLM call)
@@ -17066,8 +17143,11 @@ class GatewayRunner:
             _notify_adapter = self.adapters.get(source.platform)
             if not _notify_adapter:
                 return
+            _effective_notify_interval = _NOTIFY_INTERVAL
+            if source.platform == Platform.DISCORD and _effective_notify_interval < 480:
+                _effective_notify_interval = 480
             while True:
-                await asyncio.sleep(_NOTIFY_INTERVAL)
+                await asyncio.sleep(_effective_notify_interval)
                 _elapsed_mins = int((time.time() - _notify_start) // 60)
                 # Include agent activity context if available.
                 _agent_ref = agent_holder[0]

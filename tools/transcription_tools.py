@@ -111,12 +111,22 @@ _local_model_name: Optional[str] = None
 
 
 def _load_stt_config() -> dict:
-    """Load the ``stt`` section from user config, falling back to defaults."""
+    """Load the ``stt`` section from user config, falling back to defaults.
+
+    HERMES_STT_PROVIDER is an ops-level override for gateway services.  It keeps
+    messaging voice stable when another config writer temporarily persists a
+    different provider (for example setup/model wizards touching config.yaml).
+    """
     try:
         from hermes_cli.config import load_config
-        return load_config().get("stt", {})
+        config = dict(load_config().get("stt", {}) or {})
     except Exception:
-        return {}
+        config = {}
+
+    provider_override = os.getenv("HERMES_STT_PROVIDER", "").strip()
+    if provider_override:
+        config["provider"] = provider_override
+    return config
 
 
 def is_stt_enabled(stt_config: Optional[dict] = None) -> bool:
@@ -418,7 +428,17 @@ def _transcribe_local(file_path: str, model_name: str) -> Dict[str, Any]:
             or os.getenv(LOCAL_STT_LANGUAGE_ENV)
             or None
         )
-        transcribe_kwargs = {"beam_size": 5}
+        _beam_raw = (
+            _load_stt_config().get("local", {}).get("beam_size")
+            or os.getenv("STT_LOCAL_BEAM_SIZE")
+            or 2
+        )
+        try:
+            _beam_size = int(_beam_raw)
+        except (TypeError, ValueError):
+            _beam_size = 2
+        _beam_size = max(1, min(5, _beam_size))
+        transcribe_kwargs = {"beam_size": _beam_size}
         if _forced_lang:
             transcribe_kwargs["language"] = _forced_lang
 

@@ -159,8 +159,19 @@ class VoiceReceiver:
     completed utterances via a callback.
     """
 
-    SILENCE_THRESHOLD = 1.5    # seconds of silence → end of utterance
-    MIN_SPEECH_DURATION = 0.5  # minimum seconds to process (skip noise)
+    @staticmethod
+    def _env_float(name: str, default: float, minimum: float) -> float:
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            return default
+        try:
+            value = float(raw)
+        except Exception:
+            return default
+        return value if value >= minimum else minimum
+
+    SILENCE_THRESHOLD = _env_float.__func__("DISCORD_VOICE_SILENCE_SECONDS", 0.9, 0.2)
+    MIN_SPEECH_DURATION = _env_float.__func__("DISCORD_VOICE_MIN_SPEECH_SECONDS", 0.3, 0.1)
     SAMPLE_RATE = 48000        # Discord native rate
     CHANNELS = 2               # Discord sends stereo
 
@@ -815,18 +826,12 @@ class DiscordAdapter(BasePlatformAdapter):
 
             @self._client.event
             async def on_voice_state_update(member, before, after):
-                """Track voice channel join/leave events."""
-                # Only track channels where the bot is connected
-                bot_guild_ids = set(adapter_self._voice_clients.keys())
-                if not bot_guild_ids:
-                    return
-                guild_id = member.guild.id
-                if guild_id not in bot_guild_ids:
-                    return
+                """Track voice events and auto-join allowed users when configured."""
                 # Ignore the bot itself
                 if member == adapter_self._client.user:
                     return
 
+                guild_id = member.guild.id
                 joined = before.channel is None and after.channel is not None
                 left = before.channel is not None and after.channel is None
                 switched = (
@@ -835,15 +840,108 @@ class DiscordAdapter(BasePlatformAdapter):
                     and before.channel != after.channel
                 )
 
-                if joined or left or switched:
+                if not (joined or left or switched):
+                    return
+
+                logger.info(
+                    "Voice state: %s (%d) %s (guild %d)",
+                    member.display_name,
+                    member.id,
+                    "joined " + after.channel.name if joined
+                    else "left " + before.channel.name if left
+                    else f"moved {before.channel.name} -> {after.channel.name}",
+                    guild_id,
+                )
+
+                # Optional auto-join: when an allowed user joins a voice channel and
+                # the bot is not connected in that guild yet, connect immediately.
+                auto_join_enabled = os.getenv(
+                    "DISCORD_AUTO_JOIN_ALLOWED_USERS", "true"
+                ).strip().lower() in {"1", "true", "yes", "on"}
+                if not auto_join_enabled or not joined:
+                    return
+
+                existing = adapter_self._voice_clients.get(guild_id)
+                if existing and existing.is_connected():
+                    return
+
+                is_allowed = adapter_self._is_allowed_user(
+                    str(member.id),
+                    author=member,
+                    guild=member.guild,
+                    is_dm=False,
+                )
+                if not is_allowed:
+                    return
+
+                try:
+                    # Wire callbacks on-demand if run.py is available so captured
+                    # transcripts go through the normal runner pipeline.
+                    runner = getattr(adapter_self, "gateway_runner", None)
+                    if runner is not None:
+                        _voice_cb = getattr(runner, "_handle_voice_channel_input", None)
+                        if _voice_cb is not None:
+                            adapter_self._voice_input_callback = _voice_cb
+                        _disc_cb = getattr(runner, "_handle_voice_timeout_cleanup", None)
+                        if _disc_cb is not None:
+                            adapter_self._on_voice_disconnect = _disc_cb
+
+                    joined_ok = await adapter_self.join_voice_channel(after.channel)
+                    if not joined_ok:
+                        return
+
+                    # Bind a text channel for transcript + reply context.
+                    # Prefer configured home channel, then DISCORD_HOME_CHANNEL env.
+                    text_chat_id = None
+                    if runner is not None and getattr(runner, "config", None) is not None:
+                        try:
+                            home = runner.config.get_home_channel(Platform.DISCORD)
+                            if home and getattr(home, "chat_id", None):
+                                text_chat_id = str(home.chat_id)
+                        except Exception:
+                            pass
+                    if not text_chat_id:
+                        text_chat_id = os.getenv("DISCORD_HOME_CHANNEL", "").strip() or None
+
+                    if text_chat_id:
+                        try:
+                            adapter_self._voice_text_channels[guild_id] = int(text_chat_id)
+                        except ValueError:
+                            logger.debug(
+                                "Invalid DISCORD home channel id for auto-join binding: %s",
+                                text_chat_id,
+                            )
+                        else:
+                            # Ensure replies are voiced for the bound text channel.
+                            if runner is not None:
+                                try:
+                                    key = runner._voice_key(Platform.DISCORD, str(text_chat_id))
+                                    runner._voice_mode[key] = "all"
+                                    runner._save_voice_modes()
+                                    runner._set_adapter_auto_tts_enabled(
+                                        adapter_self,
+                                        str(text_chat_id),
+                                        enabled=True,
+                                    )
+                                except Exception:
+                                    logger.debug(
+                                        "Failed to persist auto-join voice mode for chat %s",
+                                        text_chat_id,
+                                        exc_info=True,
+                                    )
+
                     logger.info(
-                        "Voice state: %s (%d) %s (guild %d)",
-                        member.display_name,
+                        "Auto-joined voice for allowed user %s in guild %s channel %s",
                         member.id,
-                        "joined " + after.channel.name if joined
-                        else "left " + before.channel.name if left
-                        else f"moved {before.channel.name} -> {after.channel.name}",
                         guild_id,
+                        after.channel.id if after.channel else "unknown",
+                    )
+                except Exception:
+                    logger.warning(
+                        "Voice auto-join failed for user %s in guild %s",
+                        member.id,
+                        guild_id,
+                        exc_info=True,
                     )
 
             # Register slash commands
@@ -2859,6 +2957,48 @@ class DiscordAdapter(BasePlatformAdapter):
         # Discord markdown is fairly standard, no special escaping needed
         return content
 
+    def _nova_control_get_json(self, url: str, timeout: float = 4.0) -> dict:
+        """Small local NovaMaster HTTP probe for Discord control-room commands.
+
+        Never includes secrets; callers should summarize only health, counts, and URLs.
+        """
+        import urllib.error
+        import urllib.request
+
+        try:
+            req = urllib.request.Request(url, headers={"accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                raw = resp.read(512 * 1024).decode("utf-8", "replace")
+                try:
+                    data = json.loads(raw) if raw else {}
+                except Exception:
+                    data = {"raw": raw[:500]}
+                return {"ok": 200 <= resp.status < 300, "status": resp.status, "data": data}
+        except urllib.error.HTTPError as exc:
+            return {"ok": False, "status": exc.code, "data": {"error": str(exc)}}
+        except Exception as exc:
+            return {"ok": False, "status": 0, "data": {"error": str(exc)}}
+
+    async def _send_nova_control_response(
+        self,
+        interaction: Any,
+        command_text: str,
+        content: str,
+        *,
+        ephemeral: bool = False,
+    ) -> None:
+        if not await self._check_slash_authorization(interaction, command_text):
+            return
+        if len(content) > 1900:
+            content = content[:1850].rstrip() + "\n…"
+        try:
+            if interaction.response.is_done():
+                await interaction.followup.send(content, ephemeral=ephemeral)
+            else:
+                await interaction.response.send_message(content, ephemeral=ephemeral)
+        except Exception:
+            logger.warning("[Discord] Failed sending Nova control response", exc_info=True)
+
     async def _run_simple_slash(
         self,
         interaction: discord.Interaction,
@@ -3057,6 +3197,83 @@ class DiscordAdapter(BasePlatformAdapter):
         @discord.app_commands.describe(prompt="The prompt to run in the background")
         async def slash_background(interaction: discord.Interaction, prompt: str):
             await self._run_simple_slash(interaction, f"/background {prompt}", "Background task started~")
+
+        @tree.command(name="agents", description="Show NovaMaster/Claw3D agent status")
+        async def slash_agents(interaction: Any):
+            backend = await asyncio.to_thread(
+                self._nova_control_get_json, "http://127.0.0.1:8095/agents"
+            )
+            health = await asyncio.to_thread(
+                self._nova_control_get_json, "http://127.0.0.1:18800/health"
+            )
+            data = backend.get("data") or {}
+            agents = data.get("agents") if isinstance(data, dict) else None
+            if not isinstance(agents, list):
+                agents = data if isinstance(data, list) else []
+            lines = [
+                "🤖 **NovaMaster agents**",
+                f"Backend: {'🟢' if backend.get('ok') else '🔴'} HTTP {backend.get('status')}",
+                f"Adapter: {'🟢' if health.get('ok') else '🔴'} HTTP {health.get('status')} · count={(health.get('data') or {}).get('agentCount', '?')}",
+            ]
+            if agents:
+                for agent in agents[:12]:
+                    if isinstance(agent, dict):
+                        name = agent.get("name") or agent.get("id") or agent.get("agent_id") or "agent"
+                        state = agent.get("status") or agent.get("state") or agent.get("room") or "ready"
+                        lines.append(f"• `{name}` — {state}")
+            else:
+                lines.append("Geen agentlijst uit backend; check Claw3D backend :8095.")
+            await self._send_nova_control_response(interaction, "/agents", "\n".join(lines))
+
+        @tree.command(name="secretaresse", description="Ask the NovaMaster secretary persona")
+        async def slash_secretaresse(interaction: Any, prompt: str = ""):
+            task = prompt.strip() or "Geef mijn korte dagbriefing: agenda, blockers, top 3 acties, meetings en follow-up. Nederlands, compact."
+            await self._run_simple_slash(
+                interaction,
+                "Secretaresse-route: antwoord als NovaMaster secretaresse. " + task,
+                "Secretaresse ingeschakeld~",
+            )
+
+        @tree.command(name="vergadering", description="Start/return the NovaMaster LiveKit meeting link")
+        async def slash_vergadering(interaction: Any):
+            worker = await asyncio.to_thread(
+                self._nova_control_get_json, "http://127.0.0.1:18810/health"
+            )
+            html_ok = os.path.exists("/home/faramix/tmp/nova_videochat.html")
+            content = "\n".join([
+                "🎥 **NovaMaster vergadering**",
+                "Join link: http://127.0.0.1:8787/nova_videochat.html",
+                "Room: `voice_room`",
+                f"Voice-agent: {'🟢' if worker.get('ok') and (worker.get('data') or {}).get('connected') else '🟡'} connected={(worker.get('data') or {}).get('connected', False)} published_track={(worker.get('data') or {}).get('published_track', False)}",
+                f"Videochat page: {'🟢 klaar' if html_ok else '🟡 nog genereren via create_nova_videochat.py'}",
+                "Tip: klik **Join videochat** en sta mic/camera toe.",
+            ])
+            await self._send_nova_control_response(interaction, "/vergadering", content)
+
+        @tree.command(name="task", description="Create a NovaMaster task via Hermes/Claw3D route")
+        async def slash_task(interaction: Any, text: str):
+            prompt = f"Maak een Claw3D/Kanban taak van dit Discord-bericht, dedupe indien mogelijk, en antwoord met taakstatus: {text}"
+            await self._run_simple_slash(interaction, prompt, "Task route gestart~")
+
+        @tree.command(name="claw3d", description="Show Claw3D/Office health and open link")
+        async def slash_claw3d(interaction: Any):
+            office = await asyncio.to_thread(
+                self._nova_control_get_json, "http://127.0.0.1:9120/api/health"
+            )
+            backend = await asyncio.to_thread(
+                self._nova_control_get_json, "http://127.0.0.1:8095/health"
+            )
+            adapter = await asyncio.to_thread(
+                self._nova_control_get_json, "http://127.0.0.1:18800/health"
+            )
+            content = "\n".join([
+                "🕹️ **Claw3D / Office**",
+                "Open: http://127.0.0.1:9120/office",
+                f"Office: {'🟢' if office.get('ok') else '🔴'} HTTP {office.get('status')}",
+                f"Backend: {'🟢' if backend.get('ok') else '🔴'} HTTP {backend.get('status')} · agents={(backend.get('data') or {}).get('agents', '?')}",
+                f"Adapter: {'🟢' if adapter.get('ok') else '🔴'} HTTP {adapter.get('status')} · agentCount={(adapter.get('data') or {}).get('agentCount', '?')}",
+            ])
+            await self._send_nova_control_response(interaction, "/claw3d", content)
 
         # ── Auto-register any gateway-available commands not yet on the tree ──
         # This ensures new commands added to COMMAND_REGISTRY in
