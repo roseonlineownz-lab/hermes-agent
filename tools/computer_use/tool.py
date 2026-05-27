@@ -130,12 +130,27 @@ def _get_backend() -> ComputerUseBackend:
     global _backend
     with _backend_lock:
         if _backend is None:
-            backend_name = os.environ.get("HERMES_COMPUTER_USE_BACKEND", "cua").lower()
-            if backend_name in {"cua", "cua-driver", ""}:
+            backend_name = os.environ.get("HERMES_COMPUTER_USE_BACKEND", "").lower()
+            if backend_name == "noop":  # pragma: no cover
+                _backend = _NoopBackend()
+            elif backend_name in {"cua", "cua-driver"}:
                 from tools.computer_use.cua_backend import CuaDriverBackend
                 _backend = CuaDriverBackend()
-            elif backend_name == "noop":  # pragma: no cover
-                _backend = _NoopBackend()
+            elif backend_name == "linux":
+                from tools.computer_use.linux_backend import LinuxBackend
+                _backend = LinuxBackend()
+            elif backend_name == "":
+                if sys.platform == "darwin":
+                    from tools.computer_use.cua_backend import CuaDriverBackend
+                    _backend = CuaDriverBackend()
+                elif sys.platform == "linux":
+                    from tools.computer_use.linux_backend import LinuxBackend
+                    _backend = LinuxBackend()
+                else:
+                    raise RuntimeError(
+                        f"No computer_use backend for {sys.platform}; "
+                        "set HERMES_COMPUTER_USE_BACKEND explicitly"
+                    )
             else:
                 raise RuntimeError(f"Unknown HERMES_COMPUTER_USE_BACKEND={backend_name!r}")
             _backend.start()
@@ -736,12 +751,26 @@ def _element_to_dict(e: UIElement) -> Dict[str, Any]:
 def check_computer_use_requirements() -> bool:
     """Return True iff computer_use can run on this host.
 
-    Conditions: macOS + cua-driver binary installed (or override via env).
+    macOS: cua-driver binary on PATH.
+    Linux/WSL: xdotool + scrot on PATH with a display server.
+    Override: set HERMES_COMPUTER_USE_BACKEND=noop to force-enable.
     """
-    if sys.platform != "darwin":
-        return False
-    from tools.computer_use.cua_backend import cua_driver_binary_available
-    return cua_driver_binary_available()
+    import shutil
+
+    override = os.environ.get("HERMES_COMPUTER_USE_BACKEND", "").lower()
+    if override == "noop":
+        return True
+    if sys.platform == "darwin":
+        try:
+            from tools.computer_use.cua_backend import cua_driver_binary_available
+            return cua_driver_binary_available()
+        except ImportError:
+            return bool(shutil.which("cua-driver"))
+    if sys.platform == "linux":
+        if not shutil.which("xdotool") or not shutil.which("scrot"):
+            return False
+        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    return False
 
 
 def get_computer_use_schema() -> Dict[str, Any]:

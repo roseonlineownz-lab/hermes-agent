@@ -68,7 +68,7 @@ _HERMES_CORE_TOOLS = [
     "kanban_complete", "kanban_block", "kanban_heartbeat",
     "kanban_comment", "kanban_create", "kanban_link",
     "kanban_unblock",
-    # Computer use (macOS, gated on cua-driver being installed via check_fn)
+    # Computer use (macOS: cua-driver, Linux/WSL: xdotool+scrot, gated via check_fn)
     "computer_use",
 ]
 
@@ -141,9 +141,9 @@ TOOLSETS = {
 
     "computer_use": {
         "description": (
-            "Background macOS desktop control via cua-driver — screenshots, "
-            "mouse, keyboard, scroll, drag. Does NOT steal the user's cursor "
-            "or keyboard focus. Works with any tool-capable model."
+            "Desktop control — screenshots, mouse, keyboard, scroll, drag. "
+            "macOS: background via cua-driver. Linux/WSL: xdotool + scrot. "
+            "Works with any tool-capable model."
         ),
         "tools": ["computer_use"],
         "includes": []
