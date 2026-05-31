@@ -315,7 +315,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
               }
 
               resetSession()
-              setSessionStartedAt(Date.now())
+              setSessionStartedAt(r.started_at ? r.started_at * 1000 : Date.now())
 
               const resumed = toTranscriptMessages(r.messages)
 

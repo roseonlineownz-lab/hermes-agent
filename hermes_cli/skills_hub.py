@@ -44,6 +44,11 @@ def _resolve_short_name(name: str, sources, console: Console) -> str:
     c = console or _console
     c.print(f"[dim]Resolving '{name}'...[/]")
 
+    local = _find_local_installed_skill(name)
+    if local:
+        c.print(f"[dim]Resolved to local skill: {local['identifier']}[/]")
+        return local["identifier"]
+
     results = unified_search(name, sources, source_filter="all", limit=20)
 
     # Filter to exact name matches (case-insensitive)
@@ -79,6 +84,57 @@ def _resolve_short_name(name: str, sources, console: Console) -> str:
 
     c.print(f"[bold red]Error:[/] No skill named '{name}' found in any source.\n")
     return ""
+
+
+def _find_local_installed_skill(name_or_identifier: str) -> Optional[Dict[str, Any]]:
+    """Return metadata/content for an installed local skill by name or category/name.
+
+    The hub inspectors normally resolve remote/builtin sources. Installed local
+    skills listed by ``hermes skills list --source local`` must also be
+    inspectable, otherwise ``list`` can show a skill that ``inspect`` says does
+    not exist.
+    """
+    query = (name_or_identifier or "").strip().strip("/")
+    if not query:
+        return None
+    wanted_name = query.split("/")[-1].lower()
+    wanted_identifier = query.lower()
+
+    try:
+        from tools.skills_tool import _find_all_skills
+        skills = _find_all_skills(skip_disabled=True)
+    except Exception:
+        return None
+
+    matches = []
+    for skill in skills:
+        skill_name = str(skill.get("name", ""))
+        category = str(skill.get("category", "") or "")
+        identifier = f"{category}/{skill_name}" if category else skill_name
+        if skill_name.lower() == wanted_name or identifier.lower() == wanted_identifier:
+            path = Path(str(skill.get("path", "")))
+            if not path.exists():
+                continue
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                content = ""
+            matches.append({
+                "name": skill_name,
+                "description": str(skill.get("description", "")),
+                "category": category,
+                "identifier": identifier,
+                "path": str(path),
+                "content": content,
+            })
+
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        for match in matches:
+            if match["identifier"].lower() == wanted_identifier:
+                return match
+    return None
 
 
 def _format_extra_metadata_lines(extra: Dict[str, Any]) -> list[str]:
@@ -682,6 +738,11 @@ def do_inspect(identifier: str, console: Optional[Console] = None) -> None:
         identifier = _resolve_short_name(identifier, sources, c)
         if not identifier:
             return
+
+    local = _find_local_installed_skill(identifier)
+    if local:
+        _print_local_skill_inspect(local, c)
+        return
 
     meta, bundle, _matched_source = _resolve_source_meta_and_bundle(identifier, sources)
 

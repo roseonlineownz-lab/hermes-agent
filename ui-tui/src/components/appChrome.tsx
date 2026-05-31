@@ -232,7 +232,7 @@ function SpawnHud({ t }: { t: Theme }) {
   )
 }
 
-function SessionDuration({ startedAt }: { startedAt: number }) {
+function LiveDuration({ prefix, startedAt }: { prefix?: string; startedAt: number }) {
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -242,7 +242,31 @@ function SessionDuration({ startedAt }: { startedAt: number }) {
     return () => clearInterval(id)
   }, [startedAt])
 
-  return fmtDuration(now - startedAt)
+  const elapsed = Math.max(0, now - startedAt)
+
+  return `${prefix ?? ''}${fmtDuration(elapsed)}`
+}
+
+function usageDetailLabel(usage: Usage, cols: number) {
+  const parts: string[] = []
+
+  if (usage.input > 0) {
+    parts.push(`in ${fmtK(usage.input)}`)
+  }
+
+  if (usage.output > 0) {
+    parts.push(`out ${fmtK(usage.output)}`)
+  }
+
+  if (usage.reasoning && usage.reasoning > 0) {
+    parts.push(`rsn ${fmtK(usage.reasoning)}`)
+  }
+
+  if (usage.calls > 0 && cols >= 110) {
+    parts.push(`calls ${usage.calls}`)
+  }
+
+  return parts.join(' ')
 }
 
 const effortLabel = (effort?: string) => {
@@ -314,11 +338,12 @@ export function StatusRule({
   const barColor = ctxBarColor(pct, t)
 
   const ctxLabel = usage.context_max
-    ? `${fmtK(usage.context_used ?? 0)}/${fmtK(usage.context_max)}`
+    ? `ctx ${fmtK(usage.context_used ?? 0)}/${fmtK(usage.context_max)}`
     : usage.total > 0
-      ? `${fmtK(usage.total)} tok`
+      ? `tok ${fmtK(usage.total)}`
       : ''
 
+  const usageDetails = usageDetailLabel(usage, cols)
   const bar = usage.context_max ? ctxBar(pct) : ''
   const { leftWidth, rightWidth, separatorWidth } = statusRuleWidths(cols, cwdLabel)
   const sessionCountText = liveSessionCount > 0 ? statusSessionCountLabel(liveSessionCount) : ''
@@ -360,16 +385,28 @@ export function StatusRule({
             {ctxLabel}
           </Text>
         ) : null}
+        {usageDetails ? (
+          <Text color={t.color.muted} wrap="truncate-end">
+            {' │ '}
+            {usageDetails}
+          </Text>
+        ) : null}
         {bar ? (
           <Text color={t.color.muted} wrap="truncate-end">
             {' │ '}
             <Text color={barColor}>[{bar}]</Text> <Text color={barColor}>{pct != null ? `${pct}%` : ''}</Text>
           </Text>
         ) : null}
+        {turnStartedAt ? (
+          <Text color={t.color.muted} wrap="truncate-end">
+            {' │ '}
+            <LiveDuration prefix="turn " startedAt={turnStartedAt} />
+          </Text>
+        ) : null}
         {sessionStartedAt ? (
           <Text color={t.color.muted} wrap="truncate-end">
             {' │ '}
-            <SessionDuration startedAt={sessionStartedAt} />
+            <LiveDuration prefix="sess " startedAt={sessionStartedAt} />
           </Text>
         ) : null}
         {typeof usage.compressions === 'number' && usage.compressions > 0 ? (

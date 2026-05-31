@@ -126,6 +126,7 @@ export interface SessionResumeResponse {
   messages: GatewayTranscriptMessage[]
   resumed?: string
   session_id: string
+  started_at?: number
 }
 
 export type LiveSessionStatus = 'idle' | 'starting' | 'waiting' | 'working'
