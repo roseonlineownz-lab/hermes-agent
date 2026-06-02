@@ -8776,9 +8776,26 @@ class HermesCLI:
                     _cprint(f"{_ACCENT}Ambiguous command: {cmd_lower}{_RST}")
                     _cprint(f"{_DIM}Did you mean: {', '.join(sorted(matches))}?{_RST}")
                 else:
-                    _cprint(f"\033[1;31mUnknown command: {cmd_lower}{_RST}")
-                    _cprint(f"{_DIM}{_ACCENT}Type /help for available commands{_RST}")
-        
+                    # Fuzzy fallback: tolerate typos that prefix-matching cannot catch,
+                    # e.g. /modelù → /model, /comit → /commit, /quti → /quit. Uses stdlib
+                    # difflib (no dependency). A single strong match auto-corrects so the
+                    # user keeps flowing; multiple candidates are suggested, not guessed.
+                    import difflib
+                    _close = difflib.get_close_matches(
+                        typed_base, sorted(all_known), n=3, cutoff=0.72
+                    )
+                    if len(_close) == 1 and _close[0] != typed_base:
+                        _corrected = _close[0] + cmd_original.strip()[len(typed_base):]
+                        _cprint(f"{_DIM}{_ACCENT}Assuming you meant {_close[0]} "
+                                f"(typed {cmd_lower.split()[0]}){_RST}")
+                        return self.process_command(_corrected)
+                    elif _close:
+                        _cprint(f"\033[1;31mUnknown command: {cmd_lower}{_RST}")
+                        _cprint(f"{_DIM}Did you mean: {', '.join(_close)}?{_RST}")
+                    else:
+                        _cprint(f"\033[1;31mUnknown command: {cmd_lower}{_RST}")
+                        _cprint(f"{_DIM}{_ACCENT}Type /help for available commands{_RST}")
+
         return True
     
     def _handle_background_command(self, cmd: str):
