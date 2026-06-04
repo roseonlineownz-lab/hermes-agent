@@ -75,8 +75,8 @@ if (USER_DATA_OVERRIDE) {
   app.setPath('userData', resolvedUserData)
 }
 
-const PORT_FLOOR = 9120
-const PORT_CEILING = 9199
+const PORT_FLOOR = Number.parseInt(process.env.HERMES_DESKTOP_PORT_FLOOR || '9120', 10)
+const PORT_CEILING = Number.parseInt(process.env.HERMES_DESKTOP_PORT_CEILING || '9199', 10)
 const DEV_SERVER = process.env.HERMES_DESKTOP_DEV_SERVER
 const IS_PACKAGED = app.isPackaged
 const IS_MAC = process.platform === 'darwin'
