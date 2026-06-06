@@ -71,7 +71,7 @@ import { ModelVisibilityOverlay } from './model-visibility-overlay'
 import { RightSidebarPane } from './right-sidebar'
 import { $terminalTakeover } from './right-sidebar/store'
 import { PersistentTerminal, TerminalSlot } from './right-sidebar/terminal/persistent'
-import { NEW_CHAT_ROUTE, routeSessionId, sessionRoute, SETTINGS_ROUTE } from './routes'
+import { AGENTS_ROUTE, ARTIFACTS_ROUTE, NEW_CHAT_ROUTE, routeSessionId, sessionRoute, SETTINGS_ROUTE } from './routes'
 import { useContextSuggestions } from './session/hooks/use-context-suggestions'
 import { useCwdActions } from './session/hooks/use-cwd-actions'
 import { useHermesConfig } from './session/hooks/use-hermes-config'
@@ -145,6 +145,17 @@ export function DesktopController() {
   const routeTokenRef = useRef(routeToken)
   routeTokenRef.current = routeToken
   const getRouteToken = useCallback(() => routeTokenRef.current, [])
+
+  useEffect(() => {
+    const forced = window.localStorage.getItem('hermesForceRoute')
+
+    if (forced !== 'agents' && forced !== 'artifacts') {
+      return
+    }
+
+    window.localStorage.removeItem('hermesForceRoute')
+    navigate(forced === 'agents' ? AGENTS_ROUTE : ARTIFACTS_ROUTE, { replace: true })
+  }, [navigate])
 
   const {
     agentsOpen,
