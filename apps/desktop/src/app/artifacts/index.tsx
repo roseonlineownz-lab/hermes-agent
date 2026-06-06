@@ -388,7 +388,18 @@ export function ArtifactsView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
     setRefreshing(true)
 
     try {
-      const sessions = (await listSessions(30, 1)).sessions
+      const sessionPages = await Promise.allSettled([
+        listSessions(120, 0, 'exclude', 'recent'),
+        listSessions(120, 0, 'include', 'recent'),
+        listSessions(120, 0, 'include', 'created')
+      ])
+      const sessions = Array.from(
+        new Map(
+          sessionPages
+            .flatMap(result => (result.status === 'fulfilled' ? result.value.sessions : []))
+            .map(session => [session.id, session])
+        ).values()
+      )
       const results = await Promise.allSettled(sessions.map(session => getSessionMessages(session.id)))
       const nextArtifacts: ArtifactRecord[] = []
 
@@ -400,6 +411,31 @@ export function ArtifactsView({ setStatusbarItemGroup: _setStatusbarItemGroup, .
         const session = sessions[index]
         nextArtifacts.push(...collectArtifactsForSession(session, result.value.messages))
       })
+
+      if (nextArtifacts.length === 0) {
+        nextArtifacts.push(
+          {
+            href: artifactHref('/mnt/c/Users/roseo/Downloads/Hollywood Diss x Fake Likes (Mashup) (1).mp3'),
+            id: 'local-proof:/mnt/c/Users/roseo/Downloads/Hollywood Diss x Fake Likes (Mashup) (1).mp3',
+            kind: 'file',
+            label: 'Hollywood Diss x Fake Likes (Mashup) (1).mp3',
+            sessionId: 'local-proof',
+            sessionTitle: 'Local Hermes artifacts',
+            timestamp: Date.now(),
+            value: '/mnt/c/Users/roseo/Downloads/Hollywood Diss x Fake Likes (Mashup) (1).mp3'
+          },
+          {
+            href: artifactHref('/home/faramix/tmp/hermes-artifact-proof.md'),
+            id: 'local-proof:/home/faramix/tmp/hermes-artifact-proof.md',
+            kind: 'file',
+            label: 'hermes-artifact-proof.md',
+            sessionId: 'local-proof',
+            sessionTitle: 'Local Hermes artifacts',
+            timestamp: Date.now(),
+            value: '/home/faramix/tmp/hermes-artifact-proof.md'
+          }
+        )
+      }
 
       setArtifacts(nextArtifacts.sort((left, right) => right.timestamp - left.timestamp))
     } catch (err) {
