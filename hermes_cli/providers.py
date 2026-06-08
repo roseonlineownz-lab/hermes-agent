@@ -349,6 +349,14 @@ ALIASES: Dict[str, str] = {
     "gmicloud": "gmi",
 
     # Local server aliases → virtual "local" concept (resolved via user config)
+    # Compatibility aliases from older configs/flows that still emit these keys.
+    # Keep these mapped to the local launch provider that actually exists in
+    # this deployment, so runtime resolution stays stable instead of failing.
+    "ollama-local": "ollama-launch",
+    "ollama_local": "ollama-launch",
+    "ollama-localhost": "ollama-launch",
+    "ollama-alt": "ollama-launch",
+    "ollama_alt": "ollama-launch",
     "lmstudio": "lmstudio",
     "lm-studio": "lmstudio",
     "lm_studio": "lmstudio",
