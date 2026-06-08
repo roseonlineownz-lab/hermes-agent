@@ -1510,7 +1510,17 @@ def resolve_provider(
         "kilo": "kilocode", "kilo-code": "kilocode", "kilo-gateway": "kilocode",
         "lmstudio": "lmstudio", "lm-studio": "lmstudio", "lm_studio": "lmstudio",
         # Local server aliases — route through the generic custom provider
-        "ollama": "custom", "ollama_cloud": "ollama-cloud",
+        "ollama": "custom",
+        "ollama-cloud": "ollama-cloud",
+        # Legacy local-Ollama aliases used by older configs and desktop exports.
+        "ollama-local": "custom",
+        "ollama_local": "custom",
+        "ollama-localhost": "custom",
+        "ollama-alt": "custom",
+        "ollama_alt": "custom",
+        # Backward-compat wrapper name still found in many Hermes presets.
+        "ollama-launch": "custom",
+        "ollama_launch": "custom",
         "vllm": "custom", "llamacpp": "custom",
         "llama.cpp": "custom", "llama-cpp": "custom",
     }

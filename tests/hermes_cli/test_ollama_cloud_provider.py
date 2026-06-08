@@ -64,6 +64,18 @@ class TestOllamaCloudAliases:
         # bare "ollama" stays local
         assert _PROVIDER_ALIASES.get("ollama") == "custom"
 
+    def test_legacy_local_aliases_resolve_to_custom(self):
+        for alias in (
+            "ollama-local",
+            "ollama_local",
+            "ollama-localhost",
+            "ollama-alt",
+            "ollama_alt",
+            "ollama-launch",
+            "ollama_launch",
+        ):
+            assert resolve_provider(alias) == "custom"
+
     def test_normalize_provider(self):
         assert normalize_provider("ollama-cloud") == "ollama-cloud"
 
