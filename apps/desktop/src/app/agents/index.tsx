@@ -9,7 +9,7 @@ import { type Translations, useI18n } from '@/i18n'
 import { AlertCircle, CheckCircle2, Sparkles } from '@/lib/icons'
 import { useEnterAnimation } from '@/lib/use-enter-animation'
 import { cn } from '@/lib/utils'
-import { $activeSessionId } from '@/store/session'
+import { $activeSessionId, $awaitingResponse, $busy, $currentCwd, $gatewayState, $turnStartedAt } from '@/store/session'
 import {
   $subagentsBySession,
   buildSubagentTree,
@@ -75,14 +75,40 @@ interface AgentsViewProps {
   onClose: () => void
 }
 
+interface SpawnTreeDiagnostics {
+  activeSessionId: string | null
+  awaitingResponse: boolean
+  busy: boolean
+  currentCwd: string
+  gatewayState: string
+  turnStartedAt: number | null
+}
+
 export function AgentsView({ onClose }: AgentsViewProps) {
   const { t } = useI18n()
   const activeSessionId = useStore($activeSessionId)
+  const awaitingResponse = useStore($awaitingResponse)
+  const busy = useStore($busy)
+  const currentCwd = useStore($currentCwd)
+  const gatewayState = useStore($gatewayState)
   const subagentsBySession = useStore($subagentsBySession)
+  const turnStartedAt = useStore($turnStartedAt)
 
   const activeSubagents = useMemo(
     () => (activeSessionId ? (subagentsBySession[activeSessionId] ?? []) : []),
     [activeSessionId, subagentsBySession]
+  )
+
+  const diagnostics = useMemo(
+    (): SpawnTreeDiagnostics => ({
+      activeSessionId,
+      awaitingResponse,
+      busy,
+      currentCwd,
+      gatewayState,
+      turnStartedAt
+    }),
+    [activeSessionId, awaitingResponse, busy, currentCwd, gatewayState, turnStartedAt]
   )
 
   const tree = useMemo(() => buildSubagentTree(activeSubagents), [activeSubagents])
@@ -98,7 +124,7 @@ export function AgentsView({ onClose }: AgentsViewProps) {
         <h2 className="text-sm font-semibold text-foreground">{t.agents.title}</h2>
         <p className="text-xs text-muted-foreground/80">{t.agents.subtitle}</p>
       </header>
-      <SubagentTree tree={tree} />
+      <SubagentTree diagnostics={diagnostics} tree={tree} />
     </OverlayView>
   )
 }
@@ -186,7 +212,7 @@ function groupDelegations(roots: readonly SubagentNode[]): RootGroup[] {
   return groups
 }
 
-function SubagentTree({ tree }: { tree: SubagentNode[] }) {
+function SubagentTree({ diagnostics, tree }: { diagnostics: SpawnTreeDiagnostics; tree: SubagentNode[] }) {
   const { t } = useI18n()
   const flat = useMemo(() => flatten(tree), [tree])
   const groups = useMemo(() => groupDelegations(tree), [tree])
@@ -210,13 +236,7 @@ function SubagentTree({ tree }: { tree: SubagentNode[] }) {
   }, [active])
 
   if (tree.length === 0) {
-    return (
-      <div className="grid place-items-center gap-3 py-12 text-center">
-        <Sparkles className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium text-foreground/90">{t.agents.emptyTitle}</p>
-        <p className="max-w-md text-xs leading-relaxed text-muted-foreground/75">{t.agents.emptyDesc}</p>
-      </div>
-    )
+    return <EmptySpawnTree diagnostics={diagnostics} />
   }
 
   const summary = [
@@ -238,6 +258,72 @@ function SubagentTree({ tree }: { tree: SubagentNode[] }) {
             <DelegationGroup group={group} key={group.id} nowMs={nowMs} />
           ))}
         </div>
+      </div>
+    </div>
+  )
+}
+
+const shortSessionId = (sid: string | null) => {
+  if (!sid) {
+    return 'none'
+  }
+
+  return sid.length > 12 ? `${sid.slice(0, 8)}...${sid.slice(-4)}` : sid
+}
+
+const turnState = (diagnostics: SpawnTreeDiagnostics) => {
+  if (diagnostics.awaitingResponse) {
+    return 'waiting for response'
+  }
+
+  if (diagnostics.busy) {
+    return 'session busy'
+  }
+
+  if (diagnostics.turnStartedAt) {
+    return 'turn started, no delegation yet'
+  }
+
+  return 'idle'
+}
+
+function EmptySpawnTree({ diagnostics }: { diagnostics: SpawnTreeDiagnostics }) {
+  const { t } = useI18n()
+
+  const rows = [
+    { label: 'Session', value: shortSessionId(diagnostics.activeSessionId) },
+    { label: 'Gateway', value: diagnostics.gatewayState || 'idle' },
+    { label: 'Turn', value: turnState(diagnostics) },
+    { label: 'Spawn source', value: 'delegate_task / subagent.* events' },
+    { label: 'Workspace', value: diagnostics.currentCwd || 'not selected' }
+  ]
+
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center gap-4 py-8 text-center">
+      <div className="grid place-items-center gap-3">
+        <Sparkles className="size-6 text-muted-foreground/60" />
+        <p className="text-sm font-medium text-foreground/90">{t.agents.emptyTitle}</p>
+        <p className="max-w-md text-xs leading-relaxed text-muted-foreground/75">{t.agents.emptyDesc}</p>
+      </div>
+
+      <div className="mx-auto grid w-full max-w-xl gap-2 rounded-md border border-border/70 bg-background/45 p-3 text-left">
+        {rows.map(row => (
+          <div
+            className="grid min-w-0 grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-3 text-[0.7rem] leading-relaxed"
+            key={row.label}
+          >
+            <span className="text-muted-foreground/70">{row.label}</span>
+            <span className="min-w-0 wrap-anywhere font-mono text-foreground/85">{row.value}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mx-auto grid w-full max-w-xl gap-2 rounded-md border border-border/70 bg-muted/25 p-3 text-left">
+        <p className="text-[0.7rem] font-medium text-foreground/90">Live diagnosis</p>
+        <p className="text-[0.7rem] leading-relaxed text-muted-foreground/80">
+          This pane shows current-turn Hermes child agents only. Nova/EventBus background agents stay outside this
+          stream unless the active Hermes turn delegates work through <span className="font-mono">delegate_task</span>.
+        </p>
       </div>
     </div>
   )
@@ -372,7 +458,9 @@ function SubagentRow({ node, depth = 0, nowMs }: { node: SubagentNode; depth?: n
 
       {open && fileLines.length > 0 ? (
         <div className="grid min-w-0 gap-0.5 pl-6">
-          <p className="text-[0.58rem] font-medium tracking-wider text-muted-foreground/60 uppercase">{t.agents.files}</p>
+          <p className="text-[0.58rem] font-medium tracking-wider text-muted-foreground/60 uppercase">
+            {t.agents.files}
+          </p>
           {fileLines.slice(0, 8).map(line => (
             <p className="wrap-break-word font-mono text-[0.67rem] leading-relaxed text-muted-foreground/80" key={line}>
               {line}
