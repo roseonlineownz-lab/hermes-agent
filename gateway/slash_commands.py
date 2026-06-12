@@ -1791,7 +1791,12 @@ class GatewaySlashCommandsMixin:
             self._voice_mode[voice_key] = "all"
             self._save_voice_modes()
             if adapter:
-                self._set_adapter_auto_tts_enabled(adapter, chat_id, enabled=True)
+                self._set_adapter_auto_tts_enabled(
+                    adapter,
+                    chat_id,
+                    enabled=True,
+                    all_messages=True,
+                )
             return t("gateway.voice.tts_enabled")
         elif args in {"channel", "join"}:
             return await self._handle_voice_channel_join(event)

@@ -1875,20 +1875,23 @@ class BasePlatformAdapter(ABC):
         self._post_delivery_callbacks: Dict[str, Any] = {}
         self._expected_cancelled_tasks: set[asyncio.Task] = set()
         self._busy_session_handler: Optional[Callable[[MessageEvent, str], Awaitable[bool]]] = None
-        # Auto-TTS on voice input: ``_auto_tts_default`` is the global default
+        # Auto-TTS: ``_auto_tts_default`` is the global default
         # (``voice.auto_tts`` in config.yaml, pushed by GatewayRunner on connect).
         # Per-chat overrides live in two sets populated from ``_voice_mode``:
         #   - ``_auto_tts_enabled_chats``: chat explicitly opted in via ``/voice on``
-        #     or ``/voice tts`` (mode is ``voice_only`` or ``all``). Fires even when
-        #     the global default is False.
+        #     or ``/voice tts``. ``/voice on`` remains voice-input-only.
+        #   - ``_auto_tts_all_chats``: chat explicitly opted in via ``/voice tts``
+        #     and should receive audio for text replies too.
         #   - ``_auto_tts_disabled_chats``: chat explicitly opted out via
         #     ``/voice off`` (mode is ``off``). Suppresses auto-TTS even when the
         #     global default is True.
         # The gate in _process_message() is:
-        #   fire if chat in _auto_tts_enabled_chats
+        #   fire for any message if chat in _auto_tts_all_chats
+        #   fire for voice input if chat in _auto_tts_enabled_chats
         #     OR (_auto_tts_default and chat not in _auto_tts_disabled_chats)
         self._auto_tts_default: bool = False
         self._auto_tts_enabled_chats: set = set()
+        self._auto_tts_all_chats: set = set()
         self._auto_tts_disabled_chats: set = set()
         # Chats where typing indicator is paused (e.g. during approval waits).
         # _keep_typing skips send_typing when the chat_id is in this set.
@@ -2067,7 +2070,7 @@ class BasePlatformAdapter(ABC):
         return self._fatal_error_retryable
 
     def _should_auto_tts_for_chat(self, chat_id: str) -> bool:
-        """Whether auto-TTS on voice input should fire for ``chat_id``.
+        """Whether auto-TTS should fire for ``chat_id``.
 
         Decision layers (Issue #16007):
           1. Explicit ``/voice on`` or ``/voice tts`` → always fire (even if
@@ -2079,6 +2082,20 @@ class BasePlatformAdapter(ABC):
             return True
         if chat_id in self._auto_tts_disabled_chats:
             return False
+        return bool(self._auto_tts_default)
+
+    def _should_auto_tts_for_message(self, chat_id: str, message_type: MessageType) -> bool:
+        """Whether auto-TTS should fire for this inbound message.
+
+        ``/voice on`` is voice-input-only. ``/voice tts`` and the global
+        ``voice.auto_tts`` default produce audio for text replies too.
+        """
+        if chat_id in self._auto_tts_disabled_chats:
+            return False
+        if chat_id in self._auto_tts_all_chats:
+            return True
+        if chat_id in self._auto_tts_enabled_chats:
+            return message_type == MessageType.VOICE
         return bool(self._auto_tts_default)
 
     def set_fatal_error_handler(self, handler: Callable[["BasePlatformAdapter"], Awaitable[None] | None]) -> None:
@@ -4192,13 +4209,12 @@ class BasePlatformAdapter(ABC):
                         )
                         text_content = _recovered
 
-                # Auto-TTS: if voice message, generate audio FIRST (before sending text)
+                # Auto-TTS: generate audio FIRST (before sending text)
                 # Gated via ``_should_auto_tts_for_chat``: fires when the chat has
                 # an explicit ``/voice on|tts`` opt-in OR when ``voice.auto_tts`` is
                 # True globally and no ``/voice off`` has been issued.
                 _tts_path = None
-                if (self._should_auto_tts_for_chat(event.source.chat_id)
-                        and event.message_type == MessageType.VOICE
+                if (self._should_auto_tts_for_message(event.source.chat_id, event.message_type)
                         and text_content
                         and not media_files):
                     try:

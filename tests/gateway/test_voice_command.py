@@ -196,6 +196,7 @@ class TestHandleVoiceCommand:
             _auto_tts_default=False,
             _auto_tts_disabled_chats=set(),
             _auto_tts_enabled_chats=set(),
+            _auto_tts_all_chats=set(),
             platform=Platform.TELEGRAM,
         )
 
@@ -203,6 +204,7 @@ class TestHandleVoiceCommand:
 
         assert adapter._auto_tts_disabled_chats == {"off_chat"}
         assert adapter._auto_tts_enabled_chats == {"on_chat", "tts_chat"}
+        assert adapter._auto_tts_all_chats == {"tts_chat"}
 
     def test_sync_pushes_config_default_onto_adapter(self, runner, monkeypatch):
         """Issue #16007: ``voice.auto_tts`` must propagate to ``_auto_tts_default``."""
@@ -217,6 +219,7 @@ class TestHandleVoiceCommand:
             _auto_tts_default=False,
             _auto_tts_disabled_chats=set(),
             _auto_tts_enabled_chats=set(),
+            _auto_tts_all_chats=set(),
             platform=Platform.TELEGRAM,
         )
 
