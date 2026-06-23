@@ -213,9 +213,42 @@ def _is_macos() -> bool:
     return sys.platform == "darwin"
 
 
+def _candidate_cua_driver_commands() -> List[str]:
+    candidates: List[str] = []
+
+    configured = os.environ.get("HERMES_CUA_DRIVER_CMD", "").strip()
+    if configured:
+        candidates.append(os.path.expanduser(configured))
+
+    for command in ("cua-driver", "computer-use-linux"):
+        normalized = os.path.expanduser(command)
+        if normalized not in candidates:
+            candidates.append(normalized)
+
+    # Keep common install locations explicit for non-PATH installs.
+    for command in (
+        "~/.local/bin/cua-driver",
+        "~/.local/bin/computer-use-linux",
+    ):
+        normalized = os.path.expanduser(command)
+        if normalized not in candidates:
+            candidates.append(normalized)
+
+    return candidates
+
+
+def _resolve_cua_driver_command() -> Optional[str]:
+    """Return the first resolvable cua-driver binary path."""
+    for command in _candidate_cua_driver_commands():
+        resolved = shutil.which(command)
+        if resolved:
+            return resolved
+    return None
+
+
 def cua_driver_binary_available() -> bool:
-    """True if `cua-driver` is on $PATH or HERMES_CUA_DRIVER_CMD resolves."""
-    return bool(shutil.which(_CUA_DRIVER_CMD))
+    """True if a usable cua-driver binary is discoverable."""
+    return bool(_resolve_cua_driver_command())
 
 
 def cua_driver_update_check(*, timeout: float = 8.0) -> Optional[Dict[str, Any]]:
@@ -231,8 +264,11 @@ def cua_driver_update_check(*, timeout: float = 8.0) -> Optional[Dict[str, Any]]
     raises.
     """
     try:
+        driver_cmd = _resolve_cua_driver_command()
+        if not driver_cmd:
+            return None
         proc = subprocess.run(
-            [_CUA_DRIVER_CMD, "check-update", "--json"],
+            [driver_cmd, "check-update", "--json"],
             capture_output=True, text=True, timeout=timeout,
             # Some older drivers don't have the verb and fall through to a
             # stdin-reading mode rather than erroring — DEVNULL gives them EOF
@@ -582,7 +618,10 @@ class _CuaDriverSession:
             # Surface 8: ask cua-driver itself which subcommand spawns
             # the MCP server, instead of hardcoding ["mcp"]. Falls back
             # transparently for older drivers / any discovery failure.
-            command, args = _resolve_mcp_invocation(_CUA_DRIVER_CMD)
+            driver_cmd = _resolve_cua_driver_command()
+            if not driver_cmd:
+                raise RuntimeError(cua_driver_install_hint())
+            command, args = _resolve_mcp_invocation(driver_cmd)
             params = StdioServerParameters(
                 command=command,
                 args=args,
