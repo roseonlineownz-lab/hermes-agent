@@ -1100,7 +1100,18 @@ def do_audit(name: Optional[str] = None, console: Optional[Console] = None,
             c.print(f"[yellow]Warning:[/] {entry['name']} — path missing: {entry['install_path']}")
             continue
 
-        result = scan_skill(skill_path, source=entry.get("identifier", entry["source"]))
+        # Preserve the registry trust context recorded at install time.  Official
+        # optional skills are trusted only when the scanner receives the exact
+        # ``official`` provenance marker; their user-facing identifiers (for
+        # example ``official/devops/watchers``) intentionally resolve as
+        # community input.  Non-official registries still use the canonical
+        # identifier so trusted-repository matching remains intact.
+        scan_source = (
+            "official"
+            if entry.get("source") == "official"
+            else entry.get("identifier") or entry["source"]
+        )
+        result = scan_skill(skill_path, source=scan_source)
         c.print(format_scan_report(result))
 
         if deep:

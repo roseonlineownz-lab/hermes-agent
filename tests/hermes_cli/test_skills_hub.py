@@ -5,7 +5,7 @@ import pytest
 from rich.console import Console
 
 from cli import ChatConsole
-from hermes_cli.skills_hub import do_check, do_install, do_list, do_update, handle_skills_slash
+from hermes_cli.skills_hub import do_audit, do_check, do_install, do_list, do_update, handle_skills_slash
 
 
 class _DummyLockFile:
@@ -369,6 +369,47 @@ def test_do_install_scans_official_bundles_with_source_provenance(
     do_install("official/agent/prunus-gaia", console=console, skip_confirm=True)
 
     assert scanned["source"] == "official"
+
+
+def test_do_audit_preserves_installed_registry_trust_context(monkeypatch, tmp_path):
+    import tools.skills_guard as guard
+    import tools.skills_hub as hub
+
+    installed = [
+        {
+            "name": "watchers",
+            "source": "official",
+            "identifier": "official/devops/watchers",
+            "install_path": "watchers",
+        },
+        {
+            "name": "frontend-design",
+            "source": "skills-sh",
+            "identifier": "skills-sh/anthropics/skills/frontend-design",
+            "install_path": "frontend-design",
+        },
+    ]
+    for entry in installed:
+        skill_dir = tmp_path / entry["install_path"]
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(f"# {entry['name']}\n")
+
+    scanned_sources = []
+    monkeypatch.setattr(hub, "SKILLS_DIR", tmp_path)
+    monkeypatch.setattr(hub, "HubLockFile", lambda: _DummyLockFile(installed))
+    monkeypatch.setattr(
+        guard,
+        "scan_skill",
+        lambda skill_path, source="community": scanned_sources.append(source) or object(),
+    )
+    monkeypatch.setattr(guard, "format_scan_report", lambda result: "scan ok")
+
+    do_audit(console=Console(file=StringIO(), force_terminal=False, color_system=None))
+
+    assert scanned_sources == [
+        "official",
+        "skills-sh/anthropics/skills/frontend-design",
+    ]
 
 
 def test_do_install_preserves_nested_official_optional_path(
@@ -780,4 +821,3 @@ def test_do_search_json_flag_emits_full_identifiers(capsys):
     assert payload[0]["source"] == "browse-sh"
     # Table render must be suppressed — sink should be empty (no "Searching for:" header).
     assert "Searching for:" not in sink.getvalue()
-
