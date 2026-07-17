@@ -283,7 +283,11 @@ def build_bundle_invocation_message(
 
     # Late import to avoid pulling tools/* at module import time and to
     # keep skill_bundles cheap to import in test environments.
-    from agent.skill_commands import _load_skill_payload, _build_skill_message
+    from agent.skill_commands import (
+        _build_skill_message,
+        _load_skill_payload,
+        _record_skill_trace,
+    )
 
     try:
         from agent.skill_utils import get_disabled_skill_names
@@ -318,6 +322,8 @@ def build_bundle_invocation_message(
         if skill_name in disabled_names or identifier in disabled_names:
             disabled.append(skill_name or identifier)
             continue
+
+        _record_skill_trace(skill_name, "bundle", task_id)
 
         try:
             from tools.skill_usage import bump_use
