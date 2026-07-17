@@ -175,6 +175,15 @@ def _load_skill_payload(skill_identifier: str, task_id: str | None = None) -> tu
     return loaded_skill, skill_dir, skill_name
 
 
+def _record_skill_trace(skill_name: str, source: str, task_id: str | None) -> None:
+    """Notify Nova without allowing observability failures into skill loading."""
+    try:
+        from agent.nova_skill_trace import record_loaded
+        record_loaded(skill_name, source=source, task_id=task_id)
+    except Exception:
+        pass
+
+
 def _inject_skill_config(loaded_skill: dict[str, Any], parts: list[str]) -> None:
     """Resolve and inject skill-declared config values into the message parts.
 
@@ -538,6 +547,8 @@ def build_skill_invocation_message(
 
     loaded_skill, skill_dir, skill_name = loaded
 
+    _record_skill_trace(skill_name, "skill_command", task_id)
+
     # Track active usage for Curator lifecycle management (#17782)
     try:
         from tools.skill_usage import bump_use
@@ -646,6 +657,8 @@ def build_stacked_skill_invocation_message(
             continue
         loaded_skill, skill_dir, skill_name = loaded
 
+        _record_skill_trace(skill_name, "skill_command", task_id)
+
         # Track active usage for Curator lifecycle management (#17782)
         try:
             from tools.skill_usage import bump_use
@@ -732,6 +745,8 @@ def build_preloaded_skills_prompt(
         if skill_name in disabled_names or identifier in disabled_names:
             missing.append(identifier)
             continue
+
+        _record_skill_trace(skill_name, "preload", task_id)
 
         # Track active usage for Curator lifecycle management (#17782)
         try:

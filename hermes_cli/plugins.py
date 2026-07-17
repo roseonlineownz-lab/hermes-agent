@@ -1251,6 +1251,11 @@ class PluginManager:
     def __init__(self) -> None:
         self._plugins: Dict[str, LoadedPlugin] = {}
         self._hooks: Dict[str, List[Callable]] = {}
+        try:
+            from agent.nova_skill_trace import native_hook_callbacks
+            self._native_hooks = native_hook_callbacks()
+        except Exception:
+            self._native_hooks = {}
         self._middleware: Dict[str, List[Callable]] = {}
         self._plugin_tool_names: Set[str] = set()
         self._plugin_platform_names: Set[str] = set()
@@ -1910,7 +1915,10 @@ class PluginManager:
         persisted to session DB.
         """
         kwargs.setdefault("telemetry_schema_version", OBSERVER_SCHEMA_VERSION)
-        callbacks = self._hooks.get(hook_name, [])
+        callbacks = [
+            *([self._native_hooks[hook_name]] if hook_name in self._native_hooks else []),
+            *self._hooks.get(hook_name, []),
+        ]
         results: List[Any] = []
         for cb in callbacks:
             try:
@@ -1928,7 +1936,7 @@ class PluginManager:
 
     def has_hook(self, hook_name: str) -> bool:
         """Return True when at least one callback is registered for a hook."""
-        return bool(self._hooks.get(hook_name))
+        return hook_name in self._native_hooks or bool(self._hooks.get(hook_name))
 
     def has_middleware(self, kind: str) -> bool:
         """Return True when at least one callback is registered for middleware."""
