@@ -65,6 +65,8 @@ gateway:
     header:                "🤖 **Active Agents & Tasks**"
     active_agents:         "**Active agents:** {count}"
     this_chat:             " · this chat"
+    this_chat_label:       "This chat"
+    another_chat_label:    "Another chat"
     more:                  "... and {count} more"
     running_processes:     "**Running background processes:** {count}"
     async_jobs:            "**Gateway async jobs:** {count}"
