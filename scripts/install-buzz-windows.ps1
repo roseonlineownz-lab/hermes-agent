@@ -5,7 +5,7 @@ $Url = "https://github.com/block/buzz/releases/download/v$Version/Buzz_${Version
 $ExpectedSha256 = '52622e704025f7ea14ee4f327ec6d93cb054a7336daa6833357c64dd64968f2a'
 $Installer = Join-Path $env:TEMP "Buzz_${Version}_Setup.exe"
 
-Write-Host "Buzz Desktop v$Version wordt veilig gedownload..." -ForegroundColor Cyan
+Write-Host "NIEUWE Block Buzz Desktop v$Version wordt veilig gedownload..." -ForegroundColor Cyan
 Invoke-WebRequest -Uri $Url -OutFile $Installer -UseBasicParsing
 
 $ActualSha256 = (Get-FileHash -Path $Installer -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -47,7 +47,7 @@ if ($BuzzExe) {
 
 Write-Host ''
 Write-Host 'VOLGENDE STAP:' -ForegroundColor Cyan
-Write-Host '1. Open in Buzz de optie Pair mobile / Link device.'
-Write-Host '2. Scan de QR-code met de Buzz-app op je gsm.'
+Write-Host '1. Ga in Block Buzz naar Settings > Mobile pairing.'
+Write-Host '2. Klik Start pairing en scan de QR-code met Buzz Mobile.'
 Write-Host '3. Deel nooit de nostrpair://-koppelcode met iemand anders.'
 Read-Host 'Druk op Enter om dit venster te sluiten'
