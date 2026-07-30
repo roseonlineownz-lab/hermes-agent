@@ -182,6 +182,10 @@ async def test_agents_command_reports_active_agents_and_processes(monkeypatch):
     assert "**Active agents:** 1" in result
     assert "**Running background processes:** 1" in result
     assert "proc-1" in result
+    assert "**This chat**" in result
+    assert "agent:main:telegram" not in result
+    assert "sess-running" not in result
+    assert "openrouter/test-model" not in result
     running_agent.interrupt.assert_not_called()
 
 

@@ -8616,6 +8616,13 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         is_steer_mode = effective_mode == "steer"
         is_redirect_mode = effective_mode == "interrupt" and redirected
 
+        from gateway.activity_labels import (
+            describe_incoming_request,
+            humanize_activity,
+        )
+
+        request_label = describe_incoming_request(event)
+
         # If not in queue/steer mode, interrupt the running agent immediately.
         # This aborts in-flight tool calls and causes the agent loop to exit
         # at the next check point.
@@ -8703,7 +8710,6 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 summary = running_agent.get_activity_summary()
                 iteration = summary.get("api_call_count", 0)
                 max_iter = summary.get("max_iterations", 0)
-                current_tool = summary.get("current_tool")
                 start_ts = _busy_state.turn.started_ts if _busy_state else 0
                 if start_ts:
                     elapsed_min = int((now - start_ts) / 60)
@@ -8711,16 +8717,17 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                         status_parts.append(f"{elapsed_min} min elapsed")
                 if max_iter:
                     status_parts.append(f"iteration {iteration}/{max_iter}")
-                if current_tool:
-                    status_parts.append(f"running: {current_tool}")
+                activity_label = humanize_activity(summary)
+                if activity_label:
+                    status_parts.append(f"activity: {activity_label}")
             except Exception:
                 pass
 
         status_detail = f" ({', '.join(status_parts)})" if status_parts else ""
         if is_steer_mode:
             message = (
-                f"⏩ Steered into current run{status_detail}. "
-                f"Your message arrives after the next tool call."
+                f"⏩ Your {request_label} was added to the current run{status_detail}. "
+                f"It arrives after the next tool call."
             )
         elif is_redirect_mode:
             message = (
@@ -8732,23 +8739,23 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # follow-up didn't accidentally kill the subagent and
             # discovers `/stop` as the explicit escape hatch.
             message = (
-                f"⏳ Subagent working{status_detail} — your message is queued for "
+                f"⏳ Subagent working{status_detail} — your {request_label} is queued for "
                 f"when it finishes (use /stop to cancel everything)."
             )
         elif is_queue_mode and demoted_for_compression:
             message = (
-                f"⏳ Compressing context{status_detail} — your message is queued for "
+                f"⏳ Compressing context{status_detail} — your {request_label} is queued for "
                 f"when it finishes (use /stop to cancel everything)."
             )
         elif is_queue_mode:
             message = (
-                f"⏳ Queued for the next turn{status_detail}. "
+                f"⏳ Your {request_label} is queued for the next turn{status_detail}. "
                 f"I'll respond once the current task finishes."
             )
         else:
             message = (
-                f"⚡ Interrupting current task{status_detail}. "
-                f"I'll respond to your message shortly."
+                f"⚡ Switch requested{status_detail}. I'm stopping the current task; "
+                f"your {request_label} is queued next."
             )
 
         # First-touch onboarding: the very first time a user sends a message
@@ -23916,7 +23923,8 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                             _parts.append(
                                 f"iteration {_a['api_call_count']}/{_a['max_iterations']}"
                             )
-                        _action = _a.get("current_tool") or _a.get("last_activity_desc")
+                        from gateway.activity_labels import humanize_activity
+                        _action = humanize_activity(_a)
                         if _action:
                             _parts.append(str(_action))
                         if _parts:
