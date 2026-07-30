@@ -3510,16 +3510,23 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         cooldown = max(0.0, float(cooldown_seconds))
         if cooldown <= 0:
             return True
+        notice_ts = getattr(self, "_status_notice_ts", None)
+        if notice_ts is None:
+            # Some tests and lightweight embedders intentionally construct a
+            # GatewayRunner without calling its full constructor.  Keep this
+            # helper safe for those partial instances as well as normal runs.
+            notice_ts = {}
+            self._status_notice_ts = notice_ts
         now = time.time()
-        last = float(self._status_notice_ts.get(key, 0.0) or 0.0)
+        last = float(notice_ts.get(key, 0.0) or 0.0)
         if (now - last) < cooldown:
             return False
-        self._status_notice_ts[key] = now
-        if len(self._status_notice_ts) > 4096:
+        notice_ts[key] = now
+        if len(notice_ts) > 4096:
             # Keep memory bounded during long-lived runtimes.
             cutoff = now - max(60.0, cooldown * 4.0)
             self._status_notice_ts = {
-                k: ts for k, ts in self._status_notice_ts.items()
+                k: ts for k, ts in notice_ts.items()
                 if ts >= cutoff
             }
         return True

@@ -1,0 +1,3 @@
+[submodule "hermes-control-interface"]
+	path = hermes-control-interface
+	url = https://github.com/xaspx/hermes-control-interface.git
