@@ -979,6 +979,7 @@ class GatewaySlashCommandsMixin:
     async def _handle_agents_command(self, event: MessageEvent) -> str:
         """Handle /agents command - list active agents and running tasks."""
         from gateway.run import _AGENT_PENDING_SENTINEL
+        from gateway.activity_labels import humanize_activity
         from tools.process_registry import format_uptime_short, process_registry
 
         now = time.time()
@@ -992,13 +993,18 @@ class GatewaySlashCommandsMixin:
             started = float(running_started.get(session_key, now))
             elapsed = max(0, int(now - started))
             is_pending = agent is _AGENT_PENDING_SENTINEL
+            activity = ""
+            if not is_pending and hasattr(agent, "get_activity_summary"):
+                try:
+                    activity = humanize_activity(agent.get_activity_summary())
+                except Exception:
+                    activity = ""
             agent_rows.append(
                 {
                     "session_key": session_key,
                     "elapsed": elapsed,
                     "state": t("gateway.agents.state_starting") if is_pending else t("gateway.agents.state_running"),
-                    "session_id": "" if is_pending else str(getattr(agent, "session_id", "") or ""),
-                    "model": "" if is_pending else str(getattr(agent, "model", "") or ""),
+                    "activity": activity,
                 }
             )
 
@@ -1026,13 +1032,18 @@ class GatewaySlashCommandsMixin:
 
         if agent_rows:
             for idx, row in enumerate(agent_rows[:12], 1):
-                current = t("gateway.agents.this_chat") if row["session_key"] == current_session_key else ""
-                sid = f" · `{row['session_id']}`" if row["session_id"] else ""
-                model = f" · `{row['model']}`" if row["model"] else ""
-                lines.append(
-                    f"{idx}. `{row['session_key']}` · {row['state']} · "
-                    f"{format_uptime_short(row['elapsed'])}{sid}{model}{current}"
+                is_current = row["session_key"] == current_session_key
+                location = (
+                    t("gateway.agents.this_chat_label")
+                    if is_current
+                    else t("gateway.agents.another_chat_label")
                 )
+                lines.append(
+                    f"{idx}. **{location}** · {row['state']} · "
+                    f"{format_uptime_short(row['elapsed'])}"
+                )
+                if row["activity"]:
+                    lines.append(f"   └ {row['activity']}")
             if len(agent_rows) > 12:
                 lines.append(t("gateway.agents.more", count=len(agent_rows) - 12))
 

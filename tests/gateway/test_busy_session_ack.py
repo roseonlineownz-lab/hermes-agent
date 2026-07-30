@@ -205,7 +205,7 @@ class TestBusySessionAck:
         if not content and call_kwargs.args:
             # positional args
             content = str(call_kwargs)
-        assert "Interrupting" in content or "respond" in content
+        assert "Switch requested" in content
         assert "/stop" not in content  # no need — we ARE interrupting
 
         # Verify agent interrupt was called
@@ -235,7 +235,7 @@ class TestBusySessionAck:
         adapter._send_with_retry.assert_called_once()
         call_kwargs = adapter._send_with_retry.call_args
         content = call_kwargs.kwargs.get("content") or call_kwargs[1].get("content", "")
-        assert "Queued for the next turn" in content
+        assert "queued for the next turn" in content
         assert "respond once the current task finishes" in content
         assert "Interrupting" not in content
 
@@ -298,7 +298,7 @@ class TestBusySessionAck:
         adapter._send_with_retry.assert_called_once()
         call_kwargs = adapter._send_with_retry.call_args
         content = call_kwargs.kwargs.get("content") or call_kwargs[1].get("content", "")
-        assert "Steered" in content or "steer" in content.lower()
+        assert "added to the current run" in content
         assert "Interrupting" not in content
 
     @pytest.mark.asyncio
@@ -419,7 +419,7 @@ class TestBusySessionAck:
         # Ack uses queue-mode wording (not steer, not interrupt)
         call_kwargs = adapter._send_with_retry.call_args
         content = call_kwargs.kwargs.get("content") or call_kwargs[1].get("content", "")
-        assert "Queued for the next turn" in content
+        assert "queued for the next turn" in content
         assert "Steered" not in content
 
     @pytest.mark.asyncio
@@ -443,7 +443,7 @@ class TestBusySessionAck:
 
         call_kwargs = adapter._send_with_retry.call_args
         content = call_kwargs.kwargs.get("content") or call_kwargs[1].get("content", "")
-        assert "Queued for the next turn" in content
+        assert "queued for the next turn" in content
 
     @pytest.mark.asyncio
     async def test_interrupt_mode_text_followups_fifo_not_merged(self):
@@ -603,7 +603,7 @@ class TestBusySessionAck:
         call_kwargs = adapter._send_with_retry.call_args
         content = call_kwargs.kwargs.get("content", "")
         assert "21/60" in content  # iteration
-        assert "terminal" in content  # current tool
+        assert "Running a command" in content
         assert "10 min" in content  # elapsed
 
     @pytest.mark.asyncio
@@ -632,10 +632,29 @@ class TestBusySessionAck:
         await runner._handle_active_session_busy_message(event, sk)
 
         content = adapter._send_with_retry.call_args.kwargs.get("content", "")
-        assert "Interrupting current task" in content
+        assert "Switch requested" in content
         assert "21/60" not in content
-        assert "terminal" not in content
+        assert "Running a command" not in content
         assert "10 min" not in content
+
+    @pytest.mark.asyncio
+    async def test_busy_youtube_link_gets_specific_safe_ack(self):
+        runner, _sentinel = _make_runner()
+        runner._busy_input_mode = "interrupt"
+        adapter = _make_adapter()
+
+        event = _make_event(text="https://youtu.be/example")
+        sk = build_session_key(event.source)
+        agent = MagicMock()
+        runner._running_agents[sk] = agent
+        runner._running_agents_ts[sk] = time.time()
+        runner.adapters[event.source.platform] = adapter
+
+        await runner._handle_active_session_busy_message(event, sk)
+
+        content = adapter._send_with_retry.call_args.kwargs.get("content", "")
+        assert "Switch requested" in content
+        assert "YouTube link is queued next" in content
 
     @pytest.mark.asyncio
     async def test_draining_still_works(self):
@@ -730,7 +749,7 @@ class TestBusySessionOnboardingHint:
         content = call_kwargs.kwargs.get("content", "")
 
         # Normal ack body
-        assert "Interrupting" in content
+        assert "Switch requested" in content
         # First-touch hint appended
         assert "First-time tip" in content
         assert "/busy queue" in content
@@ -778,7 +797,7 @@ class TestBusySessionOnboardingHint:
         call_kwargs = adapter._send_with_retry.call_args
         content = call_kwargs.kwargs.get("content", "")
 
-        assert "Interrupting" in content
+        assert "Switch requested" in content
         assert "First-time tip" not in content
         assert "/busy queue" not in content
 
@@ -805,7 +824,7 @@ class TestBusySessionOnboardingHint:
             await runner._handle_active_session_busy_message(event, sk)
 
         content = adapter._send_with_retry.call_args.kwargs.get("content", "")
-        assert "Queued for the next turn" in content
+        assert "queued for the next turn" in content
         assert "First-time tip" in content
         assert "/busy interrupt" in content
         # Must NOT tell the user to /busy queue when they're already on queue.
