@@ -63,7 +63,15 @@ def _run(cmd: List[str], timeout: float = 10.0) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     if "DISPLAY" not in env:
         env["DISPLAY"] = ":0"
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    return subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        env=env,
+    )
 
 
 def _xdotool(*args: str) -> str:
