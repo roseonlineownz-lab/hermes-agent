@@ -35,6 +35,10 @@ export interface StatusbarItem {
   className?: string
   disabled?: boolean
   hidden?: boolean
+  /** Accessible label for toggling this item from the statusbar menu. */
+  toggleLabel?: string
+  /** Items with this flag cannot be hidden from the statusbar menu. */
+  lockedVisible?: boolean
   href?: string
   menuAlign?: 'center' | 'end' | 'start'
   menuClassName?: string
