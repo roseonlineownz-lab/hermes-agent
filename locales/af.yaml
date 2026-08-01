@@ -50,6 +50,8 @@ gateway:
     header:                "🤖 **Aktiewe Agente & Take**"
     active_agents:         "**Aktiewe agente:** {count}"
     this_chat:             " · hierdie geselsie"
+    this_chat_label:       "Hierdie geselsie"
+    another_chat_label:    "Nog 'n geselsie"
     more:                  "... en nog {count}"
     running_processes:     "**Lopende agtergrondprosesse:** {count}"
     async_jobs:            "**Asinchrone werke van die gateway:** {count}"

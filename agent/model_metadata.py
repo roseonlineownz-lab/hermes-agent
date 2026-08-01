@@ -634,12 +634,17 @@ def _is_known_provider_base_url(base_url: str) -> bool:
 
 
 def _endpoint_scoped_context_length(model: str, base_url: str) -> Optional[int]:
-    """Return metadata confirmed only for the Kimi Coding endpoint.
+    """Return context metadata confirmed for one provider endpoint.
 
     Kimi Coding serves K3 under the bare slug ``k3``, but users may also
     configure or select the public-facing aliases ``kimi-k3`` and
     ``kimi-k3-cot``. Only canonical ``https://api.kimi.com/coding`` endpoints
     (legacy Moonshot keys do not serve K3) get the 1 Mi context window.
+
+    NVIDIA NIM serves ``deepseek-ai/deepseek-v4-pro`` with a 262,144-token
+    window even though DeepSeek's native endpoint serves the V4 family with a
+    1M window. Keep the lower limit scoped to NVIDIA instead of weakening the
+    global model-family metadata.
     """
     normalized = _normalize_base_url(base_url)
     try:
@@ -659,6 +664,18 @@ def _endpoint_scoped_context_length(model: str, base_url: str) -> Optional[int]:
         and model.strip().lower() in {"k3", "kimi-k3", "kimi-k3-cot"}
     ):
         return 1_048_576
+    if (
+        parsed.scheme.lower() == "https"
+        and (parsed.hostname or "").lower() == "integrate.api.nvidia.com"
+        and port in (None, 443)
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path.rstrip("/") == "/v1"
+        and not parsed.query
+        and not parsed.fragment
+        and model.strip().lower() == "deepseek-ai/deepseek-v4-pro"
+    ):
+        return 262_144
     return None
 
 
@@ -753,10 +770,17 @@ def is_local_endpoint(base_url: str) -> bool:
     # Docker / Podman / Lima internal DNS names (e.g. host.docker.internal)
     if any(host.endswith(suffix) for suffix in _CONTAINER_LOCAL_SUFFIXES):
         return True
-    # Unqualified hostnames (no dots) are local by definition — Docker
-    # Compose service names, /etc/hosts entries, or mDNS names.
+    # Unqualified hostnames are commonly Docker/Compose service names, but a
+    # hostname without an explicit port is also frequently used as a dummy
+    # endpoint in tests and provider configuration.  Do not classify the
+    # latter as local: context-length discovery would then perform a DNS/HTTP
+    # probe during agent construction and can block on an unreachable resolver.
+    # Explicit ports retain the useful Compose/service-name behaviour.
     if host and "." not in host:
-        return True
+        try:
+            return parsed.port is not None
+        except ValueError:
+            return False
     # RFC-1918 private ranges, link-local, and Tailscale CGNAT
     try:
         addr = ipaddress.ip_address(host)
@@ -783,6 +807,25 @@ def is_local_endpoint(base_url: str) -> bool:
         except ValueError:
             pass
     return False
+
+
+def _has_unqualified_host_without_port(base_url: str) -> bool:
+    """Return whether *base_url* is a bare service-name endpoint.
+
+    Such names are useful in containers, but probing them synchronously can
+    block in libc DNS resolution when the service is absent.  Callers should
+    use model/catalog fallbacks unless the endpoint includes an explicit port.
+    """
+    normalized = _normalize_base_url(base_url)
+    if not normalized:
+        return False
+    url = normalized if "://" in normalized else f"http://{normalized}"
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        return bool(host and "." not in host and parsed.port is None)
+    except (TypeError, ValueError):
+        return False
 
 
 def _localhost_to_ipv4(url: str) -> str:
@@ -2530,7 +2573,11 @@ def get_model_context_length(
     # /models endpoint may report a provider-imposed limit (e.g. Copilot
     # returns 128k) instead of the model's full context (400k).  models.dev
     # has the correct per-provider values and is checked at step 5+.
-    if _is_custom_endpoint(base_url) and not _is_known_provider_base_url(base_url):
+    if (
+        _is_custom_endpoint(base_url)
+        and not _is_known_provider_base_url(base_url)
+        and not _has_unqualified_host_without_port(base_url)
+    ):
         context_length = _resolve_endpoint_context_length(model, base_url, api_key=api_key)
         if context_length is not None:
             return context_length

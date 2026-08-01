@@ -54,6 +54,8 @@ gateway:
     header:                "🤖 **Gníomhairí & Tascanna Gníomhacha**"
     active_agents:         "**Gníomhairí gníomhacha:** {count}"
     this_chat:             " · an comhrá seo"
+    this_chat_label:       "An comhrá seo"
+    another_chat_label:    "Comhrá eile"
     more:                  "... agus {count} eile"
     running_processes:     "**Próisis chúlra ag rith:** {count}"
     async_jobs:            "**Tascanna asincrónacha gateway:** {count}"

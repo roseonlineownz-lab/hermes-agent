@@ -50,6 +50,8 @@ gateway:
     header:                "🤖 **Aktif Ajanlar ve Görevler**"
     active_agents:         "**Aktif ajanlar:** {count}"
     this_chat:             " · bu sohbet"
+    this_chat_label:       "Bu sohbet"
+    another_chat_label:    "Başka sohbet"
     more:                  "... ve {count} tane daha"
     running_processes:     "**Çalışan arka plan süreçleri:** {count}"
     async_jobs:            "**Gateway asenkron işleri:** {count}"

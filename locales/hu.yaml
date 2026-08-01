@@ -50,6 +50,8 @@ gateway:
     header:                "🤖 **Aktív ügynökök és feladatok**"
     active_agents:         "**Aktív ügynökök:** {count}"
     this_chat:             " · ez a csevegés"
+    this_chat_label:       "Ez a csevegés"
+    another_chat_label:    "Másik csevegés"
     more:                  "... és még {count}"
     running_processes:     "**Futó háttérfolyamatok:** {count}"
     async_jobs:            "**Átjáró aszinkron feladatai:** {count}"

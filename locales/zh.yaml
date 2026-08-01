@@ -50,6 +50,8 @@ gateway:
     header:                "🤖 **活跃代理与任务**"
     active_agents:         "**活跃代理：** {count}"
     this_chat:             " · 当前聊天"
+    this_chat_label:       "当前聊天"
+    another_chat_label:    "其他聊天"
     more:                  "... 还有 {count} 个"
     running_processes:     "**运行中的后台进程：** {count}"
     async_jobs:            "**网关异步任务：** {count}"

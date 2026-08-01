@@ -50,6 +50,8 @@ gateway:
     header:                "🤖 **アクティブなエージェントとタスク**"
     active_agents:         "**アクティブなエージェント:** {count}"
     this_chat:             " · このチャット"
+    this_chat_label:       "このチャット"
+    another_chat_label:    "別のチャット"
     more:                  "... 他に {count} 件"
     running_processes:     "**実行中のバックグラウンドプロセス:** {count}"
     async_jobs:            "**ゲートウェイ非同期ジョブ:** {count}"

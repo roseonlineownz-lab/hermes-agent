@@ -50,6 +50,8 @@ gateway:
     header:                "🤖 **Активные агенты и задачи**"
     active_agents:         "**Активные агенты:** {count}"
     this_chat:             " · этот чат"
+    this_chat_label:       "Этот чат"
+    another_chat_label:    "Другой чат"
     more:                  "... и ещё {count}"
     running_processes:     "**Выполняющиеся фоновые процессы:** {count}"
     async_jobs:            "**Асинхронные задачи шлюза:** {count}"

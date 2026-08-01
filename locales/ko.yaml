@@ -50,6 +50,8 @@ gateway:
     header:                "🤖 **활성 에이전트 및 작업**"
     active_agents:         "**활성 에이전트:** {count}"
     this_chat:             " · 이 채팅"
+    this_chat_label:       "이 채팅"
+    another_chat_label:    "다른 채팅"
     more:                  "... 외 {count}개 더"
     running_processes:     "**실행 중인 백그라운드 프로세스:** {count}"
     async_jobs:            "**게이트웨이 비동기 작업:** {count}"
