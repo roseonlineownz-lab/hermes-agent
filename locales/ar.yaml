@@ -73,6 +73,8 @@ gateway:
     header:                "🤖 **الوكلاء والمهام النشطة**"
     active_agents:         "**الوكلاء النشطون:** {count}"
     this_chat:             " · هذه المحادثة"
+    this_chat_label:       "هذه المحادثة"
+    another_chat_label:    "محادثة أخرى"
     more:                  "... و{count} آخر"
     running_processes:     "**العمليات الخلفية الجارية:** {count}"
     async_jobs:            "**مهام البوابة غير المتزامنة:** {count}"

@@ -50,6 +50,8 @@ gateway:
     header:                "🤖 **Agentes e tarefas ativos**"
     active_agents:         "**Agentes ativos:** {count}"
     this_chat:             " · este chat"
+    this_chat_label:       "Este chat"
+    another_chat_label:    "Outro chat"
     more:                  "... e mais {count}"
     running_processes:     "**Processos em segundo plano em execução:** {count}"
     async_jobs:            "**Tarefas assíncronas do gateway:** {count}"

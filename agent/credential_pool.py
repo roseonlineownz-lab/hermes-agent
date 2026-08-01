@@ -2032,6 +2032,12 @@ class CredentialPool:
                         ),
                         None,
                     )
+                    # An explicit key hint identifies the credential that
+                    # produced the failure. If it matches no pool entry,
+                    # never refresh an unrelated healthy credential via the
+                    # current/select fallback; let recovery rotate or stop.
+                    if entry is None:
+                        return None
                 else:
                     entry = self._current_unlocked() or self._select_unlocked(
                         refresh=False
