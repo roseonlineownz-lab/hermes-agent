@@ -78,7 +78,8 @@ function Resolve-ExpectedSha256 {
         [Parameter(Mandatory)]$InstallerAsset
     )
 
-    $Digest = [string]$InstallerAsset.digest
+    $DigestProperty = $InstallerAsset.PSObject.Properties['digest']
+    $Digest = if ($DigestProperty) { [string]$DigestProperty.Value } else { '' }
     if ($Digest -match '^sha256:([0-9a-fA-F]{64})$') {
         return $Matches[1].ToLowerInvariant()
     }
