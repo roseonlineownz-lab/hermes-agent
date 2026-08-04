@@ -1890,6 +1890,21 @@ class TestTryMainAgentModelFallback:
             client, model, label = _try_main_agent_model_fallback("glm", task="vision")
         assert client is None and model is None and label == ""
 
+    def test_skips_text_only_main_model_for_vision_task(self):
+        """A vision fallback must never send image parts to a text-only model."""
+        from agent.auxiliary_client import _try_main_agent_model_fallback
+
+        with patch("agent.auxiliary_client._read_main_provider", return_value="deepseek"), \
+             patch("agent.auxiliary_client._read_main_model", return_value="deepseek-v4-flash"), \
+             patch("agent.auxiliary_client._main_model_supports_vision", return_value=False), \
+             patch("agent.auxiliary_client.resolve_provider_client") as mock_resolve:
+            client, model, label = _try_main_agent_model_fallback(
+                "openrouter", task="vision", reason="payment error"
+            )
+
+        assert client is None and model is None and label == ""
+        mock_resolve.assert_not_called()
+
 
     def test_resolves_main_provider_client(self):
         from agent.auxiliary_client import _try_main_agent_model_fallback
