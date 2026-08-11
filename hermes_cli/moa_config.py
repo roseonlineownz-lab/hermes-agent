@@ -13,12 +13,12 @@ DEFAULT_MOA_PRESET_NAME = "default"
 
 DEFAULT_MOA_REFERENCE_MODELS: list[dict[str, str]] = [
     {"provider": "openai-codex", "model": "gpt-5.5"},
-    {"provider": "openrouter", "model": "deepseek/deepseek-v4-pro"},
+    {"provider": "ollama-cloud", "model": "deepseek-v4-pro:cloud"},
 ]
 
 DEFAULT_MOA_AGGREGATOR: dict[str, str] = {
-    "provider": "openrouter",
-    "model": "anthropic/claude-opus-4.8",
+    "provider": "ollama-cloud",
+    "model": "kimi-k2.7-code:cloud",
 }
 
 DEFAULT_MOA_REFERENCE_TIMEOUT: float | None = None
