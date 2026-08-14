@@ -293,6 +293,37 @@ class OpenAIStreamer(StreamingTTSProvider):
             yield from _capped(response.iter_bytes(), "OpenAI streaming TTS")
 
 
+@register("kokoro")
+class KokoroStreamer(OpenAIStreamer):
+    """Local Kokoro's OpenAI-compatible PCM stream.
+
+    Kokoro does not need a paid-provider credential, so selecting it must not
+    fall back merely because ``OPENAI_API_KEY`` is absent. The NovaMaster local
+    endpoint is the default, while ``tts.kokoro.base_url`` and
+    ``HERMES_KOKORO_BASE_URL`` keep the route portable.
+    """
+
+    @staticmethod
+    def available() -> bool:
+        return True
+
+    def __init__(self, tts_config: Dict, section: Dict):
+        configured = dict(section)
+        base_url = str(
+            configured.get("base_url")
+            or get_env_value("HERMES_KOKORO_BASE_URL")
+            or "http://127.0.0.1:8098"
+        ).rstrip("/")
+        if not base_url.endswith("/v1"):
+            base_url = f"{base_url}/v1"
+
+        configured["base_url"] = base_url
+        configured.setdefault("api_key", get_env_value("HERMES_KOKORO_API_KEY") or "local-kokoro")
+        configured.setdefault("model", "kokoro")
+        configured.setdefault("voice", "af_heart")
+        super().__init__(tts_config, configured)
+
+
 def _capped(chunks: Iterator[bytes], label: str) -> Iterator[bytes]:
     """Pass chunks through, aborting past the 16 MiB per-sentence cap.
 

@@ -186,6 +186,7 @@ import {
   SshConnection
 } from './ssh-connection'
 import { createStreamThrottle } from './stream-throttle'
+import { TermuxMicrophoneBridge } from './termux-microphone'
 import { nativeOverlayWidth as computeNativeOverlayWidth, macTitleBarOverlayHeight } from './titlebar-overlay-width'
 import { resolveBehindCount, shouldCountCommits } from './update-count'
 import { waitForUpdateClearance } from './update-gate'
@@ -1048,6 +1049,7 @@ function registerMediaProtocol() {
 }
 
 let mainWindow = null
+const termuxMicrophone = new TermuxMicrophoneBridge()
 const backendConnectionState = createBackendConnectionState<ReturnType<typeof spawn>, any>()
 const remoteLiveness = new RemoteLivenessTracker()
 const remoteRevalidation = new RemoteRevalidationCoordinator()
@@ -10008,6 +10010,22 @@ ipcMain.handle('hermes:requestMicrophoneAccess', async () => {
   return systemPreferences.askForMediaAccess('microphone')
 })
 
+// Prefer the S25/Termux microphone when its SSH alias is reachable. Capture is
+// performed entirely outside Chromium, avoiding WSL/RDP AudioService failures;
+// the renderer receives only the completed AAC recording.
+ipcMain.handle('hermes:termux-microphone:status', () => termuxMicrophone.status())
+ipcMain.handle('hermes:termux-microphone:start', async () => {
+  await termuxMicrophone.start()
+
+  return true
+})
+ipcMain.handle('hermes:termux-microphone:stop', () => termuxMicrophone.stop())
+ipcMain.handle('hermes:termux-microphone:cancel', async () => {
+  await termuxMicrophone.cancel()
+
+  return true
+})
+
 // Re-route remote-profile session requests to the owning remote backend. Returns
 // `undefined` when not interceptable (caller takes the normal local path), else
 // the response. Reads tag the profile as ?profile=<name>; mutations carry it in
@@ -11940,6 +11958,10 @@ app.on('before-quit', event => {
   if (heldQuitForActiveWork(event)) {
     return
   }
+
+  // Never leave the phone microphone recording when Hermes is shutting down.
+  // The bridge is idempotent, so repeated before-quit passes are safe.
+  void termuxMicrophone.cancel()
 
   if ((sshConnections.size > 0 || sshBootstrapCoordinator.promises().length > 0) && !sshQuitTeardownDone) {
     event.preventDefault()

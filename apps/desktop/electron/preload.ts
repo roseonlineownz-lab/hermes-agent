@@ -107,6 +107,12 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   api: request => ipcRenderer.invoke('hermes:api', request),
   notify: payload => ipcRenderer.invoke('hermes:notify', payload),
   requestMicrophoneAccess: () => ipcRenderer.invoke('hermes:requestMicrophoneAccess'),
+  termuxMicrophone: {
+    status: () => ipcRenderer.invoke('hermes:termux-microphone:status'),
+    start: () => ipcRenderer.invoke('hermes:termux-microphone:start'),
+    stop: () => ipcRenderer.invoke('hermes:termux-microphone:stop'),
+    cancel: () => ipcRenderer.invoke('hermes:termux-microphone:cancel')
+  },
   readFileDataUrl: filePath => ipcRenderer.invoke('hermes:readFileDataUrl', filePath),
   readFileDataUrlForAttach: filePath => ipcRenderer.invoke('hermes:readFileDataUrlForAttach', filePath),
   dataUrlReadMax: {

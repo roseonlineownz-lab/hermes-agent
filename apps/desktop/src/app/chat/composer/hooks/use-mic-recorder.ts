@@ -68,6 +68,7 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
   const [recording, setRecording] = useState(false)
 
   const recorderRef = useRef<MediaRecorder | null>(null)
+  const remoteRecorderRef = useRef(false)
   const streamRef = useRef<MediaStream | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const audioContextRef = useRef<AudioContext | null>(null)
@@ -89,12 +90,22 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
     streamRef.current?.getTracks().forEach(track => track.stop())
     streamRef.current = null
     recorderRef.current = null
+    remoteRecorderRef.current = false
     setLevel(0)
     setRecording(false)
     silenceTriggeredRef.current = false
   }
 
-  useEffect(() => () => cleanup(), [])
+  useEffect(
+    () => () => {
+      if (remoteRecorderRef.current) {
+        void window.hermesDesktop?.termuxMicrophone?.cancel()
+      }
+
+      cleanup()
+    },
+    []
+  )
 
   const startMeter = (stream: MediaStream, options: MicRecorderOptions) => {
     const audioWindow = window as Window & { webkitAudioContext?: BrowserAudioContext }
@@ -167,8 +178,28 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
   }
 
   const start: MicRecorderHandle['start'] = async (options = {}) => {
-    if (recorderRef.current) {
+    if (recorderRef.current || remoteRecorderRef.current) {
       return
+    }
+
+    const termuxMicrophone = window.hermesDesktop?.termuxMicrophone
+
+    if (termuxMicrophone) {
+      const status = await termuxMicrophone.status().catch(() => ({ available: false, host: '' }))
+
+      if (status.available) {
+        try {
+          await termuxMicrophone.start()
+          remoteRecorderRef.current = true
+          startedAtRef.current = Date.now()
+          setLevel(0)
+          setRecording(true)
+
+          return
+        } catch (error) {
+          throw micError(error, copy)
+        }
+      }
     }
 
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
@@ -258,8 +289,26 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
     startMeter(stream, options)
   }
 
-  const stop: MicRecorderHandle['stop'] = () =>
-    new Promise<MicRecording | null>(resolve => {
+  const stop: MicRecorderHandle['stop'] = async () => {
+    if (remoteRecorderRef.current) {
+      const durationMs = Date.now() - startedAtRef.current
+
+      try {
+        const result = await window.hermesDesktop?.termuxMicrophone?.stop()
+
+        if (!result?.data?.byteLength) {return null}
+
+        return {
+          audio: new Blob([new Uint8Array(result.data)], { type: result.mimeType || 'audio/aac' }),
+          durationMs,
+          heardSpeech: true
+        }
+      } finally {
+        cleanup()
+      }
+    }
+
+    return new Promise<MicRecording | null>(resolve => {
       const recorder = recorderRef.current
 
       if (!recorder || recorder.state === 'inactive') {
@@ -272,11 +321,16 @@ export function useMicRecorder(copy: MicRecorderErrorCopy): {
       stopResolverRef.current = resolve
       recorder.stop()
     })
+  }
 
   const cancel: MicRecorderHandle['cancel'] = () => {
     const recorder = recorderRef.current
     const resolver = stopResolverRef.current
     stopResolverRef.current = null
+
+    if (remoteRecorderRef.current) {
+      void window.hermesDesktop?.termuxMicrophone?.cancel()
+    }
 
     if (recorder && recorder.state !== 'inactive') {
       recorder.ondataavailable = null

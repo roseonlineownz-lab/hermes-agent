@@ -158,6 +158,23 @@ gateway-bound nanostores are wiped, query-backed data is invalidated, and the
 new connection repopulates skeletons. This prevents rows or transcripts from
 the previous gateway bleeding into the next one.
 
+### NovaMaster local voice routes
+
+When `tts.provider` is `kokoro`, desktop speech streaming uses Kokoro's
+OpenAI-compatible PCM API directly. `tts.kokoro.base_url` is preferred; the
+fallback is `http://127.0.0.1:8098/v1` and can be overridden with
+`HERMES_KOKORO_BASE_URL`. No OpenAI credential is required for this local
+provider.
+
+The desktop recorder probes the SSH alias in
+`HERMES_TERMUX_MIC_SSH_HOST` (default: `s25`) for
+`termux-microphone-record` and an active Android `RECORD_AUDIO` permission.
+When available, recording runs on the Termux device and the completed AAC is
+transferred over SSH, bypassing Chromium/RDP audio. If the alias, permission, or
+Termux:API is unavailable, the normal browser microphone path remains the
+fallback. Set `HERMES_TERMUX_MIC_SSH_HOST` to an empty value to disable the
+probe.
+
 ### Verification
 
 Run before opening a PR (lint may surface pre-existing warnings but must exit cleanly):

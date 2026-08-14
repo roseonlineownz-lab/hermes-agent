@@ -119,6 +119,12 @@ declare global {
       api: <T>(request: HermesApiRequest) => Promise<T>
       notify: (payload: HermesNotification) => Promise<boolean>
       requestMicrophoneAccess: () => Promise<boolean>
+      termuxMicrophone?: {
+        status: () => Promise<{ available: boolean; host: string }>
+        start: () => Promise<boolean>
+        stop: () => Promise<null | { data: Uint8Array; mimeType: string }>
+        cancel: () => Promise<boolean>
+      }
       readFileDataUrl: (filePath: string) => Promise<string>
       /** Remote non-image attach: higher dedicated cap than preview/Settings default. */
       readFileDataUrlForAttach?: (filePath: string) => Promise<string>

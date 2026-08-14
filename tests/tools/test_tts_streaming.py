@@ -154,6 +154,53 @@ def test_openai_streamer_prefers_configured_api_key(monkeypatch):
     assert captured["client"]["api_key"] == "cfg-key"
 
 
+def test_kokoro_streamer_uses_local_openai_compatible_endpoint(monkeypatch):
+    captured = {}
+
+    class _Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def iter_bytes(self):
+            yield b"\x01\x00"
+
+    class _StreamingCreate:
+        @staticmethod
+        def create(**kwargs):
+            captured["request"] = kwargs
+            return _Response()
+
+    class _OpenAI:
+        def __init__(self, **kwargs):
+            captured["client"] = kwargs
+            self.audio = MagicMock()
+            self.audio.speech.with_streaming_response = _StreamingCreate()
+
+    monkeypatch.setattr(ts, "get_env_value", lambda key, *args: None)
+    monkeypatch.setattr("openai.OpenAI", _OpenAI)
+
+    streamer = ts.resolve_streaming_provider({
+        "provider": "kokoro",
+        "kokoro": {
+            "base_url": "http://127.0.0.1:8098",
+            "model": "kokoro",
+            "voice": "af_heart",
+        },
+    })
+
+    assert streamer is not None
+    assert list(streamer.stream("Lokale stemtest.")) == [b"\x01\x00"]
+    assert captured["client"] == {
+        "api_key": "local-kokoro",
+        "base_url": "http://127.0.0.1:8098/v1",
+    }
+    assert captured["request"]["model"] == "kokoro"
+    assert captured["request"]["voice"] == "af_heart"
+
+
 # ── Dispatch: chunked streamer path ──────────────────────────────────────
 
 
