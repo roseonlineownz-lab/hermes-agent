@@ -406,8 +406,8 @@ import {
 } from './window-state'
 import { hiddenWindowsChildOptions } from './windows-child-options'
 import {
-  buildPathExtCandidates,
   chooseUpdaterArgs,
+  findCommandOnPath,
   getVenvSitePackagesEntries,
   resolveVenvHermesCommand
 } from './windows-hermes-path'
@@ -2244,25 +2244,12 @@ function findOnPath(command) {
     .split(path.delimiter)
     .filter(Boolean)
 
-  // On Windows, try PATHEXT extensions BEFORE the bare (empty-extension) name.
-  // A real command must resolve via its .exe/.cmd (Windows command-resolution
-  // semantics consult PATHEXT); an extensionless file — e.g. a Git-Bash
-  // shell-script shim named `hermes` — must not shadow `hermes.cmd`/`hermes.exe`.
-  // The empty entry is kept LAST so callers that already include the extension
-  // (py.exe, pwsh.exe, powershell.exe) still resolve.
-  const extensions = buildPathExtCandidates(process.env.PATHEXT, IS_WINDOWS)
-
-  for (const entry of pathEntries) {
-    for (const extension of extensions) {
-      const candidate = path.join(entry, `${command}${extension}`)
-
-      if (fileExists(candidate)) {
-        return candidate
-      }
-    }
-  }
-
-  return null
+  return findCommandOnPath(command, pathEntries, {
+    isWindows: IS_WINDOWS,
+    pathext: process.env.PATHEXT,
+    joinPath: path.join,
+    fileExists
+  })
 }
 
 function isCommandScript(command) {

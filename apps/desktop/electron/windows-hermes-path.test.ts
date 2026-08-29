@@ -20,6 +20,7 @@ import { test } from 'vitest'
 import {
   buildPathExtCandidates,
   chooseUpdaterArgs,
+  findCommandOnPath,
   getVenvSitePackagesEntries,
   resolveVenvHermesCommand
 } from './windows-hermes-path'
@@ -43,6 +44,58 @@ test('buildPathExtCandidates: respects a custom PATHEXT, still empty-last', () =
 test('buildPathExtCandidates: non-Windows only tries the bare name', () => {
   assert.deepEqual(buildPathExtCandidates('.COM;.EXE;.BAT;.CMD', false), [''])
   assert.deepEqual(buildPathExtCandidates(undefined, false), [''])
+})
+
+test('findCommandOnPath: Windows prefers a later hermes.cmd over an earlier bare HERMES shim', () => {
+  const firstPathEntry = 'C:\\Git\\usr\\bin'
+  const secondPathEntry = 'C:\\Users\\Kenny\\AppData\\Roaming\\npm'
+  const bareShim = `${firstPathEntry}\\HERMES`
+  const validCommand = `${secondPathEntry}\\hermes.cmd`
+  const candidates: string[] = []
+
+  const result = findCommandOnPath('hermes', [firstPathEntry, secondPathEntry], {
+    isWindows: true,
+    pathext: '.COM;.EXE;.BAT;.CMD',
+    joinPath: (entry, command) => `${entry}\\${command}`,
+    fileExists: candidate => {
+      candidates.push(candidate)
+      return candidate.toLowerCase() === bareShim.toLowerCase() || candidate.toLowerCase() === validCommand.toLowerCase()
+    }
+  })
+
+  assert.equal(result?.toLowerCase(), validCommand.toLowerCase())
+  assert.ok(
+    candidates.indexOf(validCommand) < candidates.indexOf(bareShim) || !candidates.includes(bareShim),
+    'the bare shim must not be considered until every PATHEXT extension has scanned PATH'
+  )
+})
+
+test('findCommandOnPath: Windows keeps an earlier executable ahead of a later PATHEXT executable', () => {
+  const firstPathEntry = 'C:\\first'
+  const secondPathEntry = 'C:\\second'
+  const earlierExe = `${firstPathEntry}\\foo.EXE`
+  const laterCom = `${secondPathEntry}\\foo.COM`
+
+  const result = findCommandOnPath('foo', [firstPathEntry, secondPathEntry], {
+    isWindows: true,
+    pathext: '.COM;.EXE;.BAT;.CMD',
+    joinPath: (entry, command) => `${entry}\\${command}`,
+    fileExists: candidate => candidate.toLowerCase() === earlierExe.toLowerCase() || candidate.toLowerCase() === laterCom.toLowerCase()
+  })
+
+  assert.equal(result?.toLowerCase(), earlierExe.toLowerCase())
+})
+
+test('findCommandOnPath: POSIX keeps PATH-order behavior', () => {
+  assert.equal(
+    findCommandOnPath('hermes', ['/first', '/second'], {
+      isWindows: false,
+      pathext: undefined,
+      joinPath: (entry, command) => `${entry}/${command}`,
+      fileExists: candidate => candidate === '/second/hermes'
+    }),
+    '/second/hermes'
+  )
 })
 
 test('chooseUpdaterArgs: gentle --update when both updater runtime files exist', () => {

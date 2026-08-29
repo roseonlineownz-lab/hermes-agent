@@ -6,11 +6,9 @@
  * unwrapWindowsVenvHermesCommand(). Each of the three functions here pins one
  * of the Windows resolution bugs that caused desktop reinstall loops:
  *
- *   1. buildPathExtCandidates() — findOnPath() tried the empty extension
- *      FIRST, so an extensionless Git-Bash `hermes` shim shadowed the real
- *      hermes.cmd/hermes.exe; the shim then failed the --version probe and
- *      the desktop fell through to a spurious bootstrap/repair. The fix:
- *      PATHEXT extensions first, empty extension LAST.
+ *   1. findCommandOnPath() — an extensionless Git-Bash `hermes` shim in an
+ *      earlier PATH directory shadowed a real hermes.cmd in a later one. The
+ *      fix: resolve qualified PATHEXT commands first, then try bare files.
  *   2. chooseUpdaterArgs() — handOffWindowsBootstrapRecovery() must separate
  *      install provenance from updater viability. A bootstrap-complete marker
  *      can outlive a deleted venv, while the updater needs BOTH the venv Python
@@ -70,6 +68,67 @@ export function buildPathExtCandidates(pathext: string | undefined, isWindows: b
  * @param {string} branch
  * @returns {string[]} updater argv, e.g. ['--update', '--branch', 'main'].
  */
+export interface FindCommandOnPathDeps {
+  isWindows: boolean
+  pathext: string | undefined
+  joinPath: (entry: string, command: string) => string
+  fileExists: (filePath: string) => boolean
+}
+
+/**
+ * Resolve a bare command against PATH entries.
+ *
+ * Windows preserves PATH-directory precedence among executable extensions, then
+ * accepts extensionless files only after every qualified candidate failed.
+ * POSIX deliberately keeps conventional PATH-order semantics by checking each
+ * directory's bare command in order.
+ */
+export function findCommandOnPath(
+  command: string,
+  pathEntries: string[],
+  deps: FindCommandOnPathDeps
+): string | null {
+  const extensions = buildPathExtCandidates(deps.pathext, deps.isWindows)
+
+  if (deps.isWindows) {
+    const qualifiedExtensions = extensions.filter(Boolean)
+
+    // Preserve ordinary Windows directory precedence for executable files:
+    // complete PATHEXT lookup in an earlier PATH directory before moving on.
+    for (const entry of pathEntries) {
+      for (const extension of qualifiedExtensions) {
+        const candidate = deps.joinPath(entry, `${command}${extension}`)
+
+        if (deps.fileExists(candidate)) {
+          return candidate
+        }
+      }
+    }
+
+    // Only then accept extensionless files. This prevents a Git-Bash-style
+    // shim in an earlier directory from shadowing a real .cmd/.exe elsewhere.
+    for (const entry of pathEntries) {
+      const candidate = deps.joinPath(entry, command)
+
+      if (deps.fileExists(candidate)) {
+        return candidate
+      }
+    }
+
+    return null
+  }
+
+  for (const entry of pathEntries) {
+    const candidate = deps.joinPath(entry, command)
+
+    if (deps.fileExists(candidate)) {
+      return candidate
+    }
+  }
+
+  return null
+}
+
 export interface BootstrapRecoverySignals {
   hasBootstrapMarker: boolean
   hasVenvHermes: boolean
