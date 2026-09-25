@@ -2468,9 +2468,15 @@ def _rotate_worker_log(
 
 
 def _module_hermes_argv() -> list[str]:
-    """Interpreter-bound Hermes CLI invocation (``hermes_cli.main`` is the
-    console-script target — there is no top-level ``hermes`` package)."""
-    return [sys.executable, "-m", "hermes_cli.main"]
+    """Keep the install bootstrap when a worker changes to its task directory.
+
+    Store Python does not have hermes_cli on its default module path: the
+    desktop/CLI launcher bootstraps the source and dependency generation.
+    A bare ``-m`` loses both in a detached child.
+    """
+    from hermes_cli._launchers import runtime_command
+
+    return runtime_command(Path(__file__).resolve().parents[1], python=sys.executable)
 
 
 def _absolute_hermes_path(path: str) -> str:

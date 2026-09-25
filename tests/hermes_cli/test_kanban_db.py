@@ -1582,11 +1582,14 @@ def test_resolve_hermes_argv_prefers_module_form_over_path_shim(monkeypatch):
     import shutil
     import sys
     from hermes_cli import kanban_db_dispatch as kbd
+    from hermes_cli._launchers import runtime_command
 
     monkeypatch.delenv("HERMES_BIN", raising=False)
     monkeypatch.setattr(shutil, "which", lambda name: "/tmp/planted/hermes")
     monkeypatch.setattr(kbd, "_safe_which_no_cwd", lambda name: "/tmp/planted/hermes")
-    assert kbd._resolve_hermes_argv() == [sys.executable, "-m", "hermes_cli.main"]
+    assert kbd._resolve_hermes_argv() == runtime_command(
+        Path(kbd.__file__).resolve().parents[1], python=sys.executable
+    )
 
     monkeypatch.setenv("HERMES_BIN", "/opt/hermes/bin/hermes")
     assert kbd._resolve_hermes_argv() == ["/opt/hermes/bin/hermes"]
@@ -1594,7 +1597,7 @@ def test_resolve_hermes_argv_prefers_module_form_over_path_shim(monkeypatch):
 
 
 
-def test_resolve_hermes_argv_module_actually_runs():
+def test_resolve_hermes_argv_module_actually_runs(tmp_path):
     """The fallback module name must be importable + runnable.
 
     A unit test that pins the literal string is necessary but not
@@ -1612,7 +1615,14 @@ def test_resolve_hermes_argv_module_actually_runs():
         os.environ.pop("HERMES_BIN", None)
         with mock.patch.object(shutil, "which", return_value=None):
             argv = kbd._resolve_hermes_argv()
-    r = subprocess.run(argv + ["--version"], capture_output=True, text=True, timeout=30)
+    # Workers run in task workspaces, not the install directory. They cannot
+    # depend on a source path injected only into the dispatcher process.
+    child_env = dict(os.environ)
+    for name in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"):
+        child_env.pop(name, None)
+    child_env["HERMES_HOME"] = str(tmp_path)
+    r = subprocess.run(argv + ["--version"], cwd=tmp_path, env=child_env,
+                       capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, (
         f"`{' '.join(argv)} --version` failed (rc={r.returncode}); "
         f"stderr={r.stderr[:200]!r}"
