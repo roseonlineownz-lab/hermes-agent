@@ -69,6 +69,12 @@ export async function bundleElectronMain({ source, out, stamp, dev = false }) {
     format: 'cjs',
     outfile: join(out, 'electron-preload.js'),
   })
+  await build({
+    ...common,
+    entryPoints: [join(source, 'apps/desktop/electron/git-read-worker.ts')],
+    format: 'cjs',
+    outfile: join(out, 'git-read-worker.cjs'),
+  })
   // Preview-pane <webview> guest preload; main.ts hands this path to the
   // preview webview via will-attach-webview.
   await build({

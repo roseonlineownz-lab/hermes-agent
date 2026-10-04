@@ -50,6 +50,10 @@ export interface NoConsoleGitHost {
 
 let configuredRoots: string[] = []
 
+export function getNoConsoleGitRoots(): string[] {
+  return [...configuredRoots]
+}
+
 export function setNoConsoleGitRoots(roots: Array<string | null | undefined | false>) {
   configuredRoots = roots.filter((root): root is string => Boolean(root))
 }

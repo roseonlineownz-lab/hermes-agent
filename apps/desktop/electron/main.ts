@@ -623,7 +623,7 @@ import {
   writeGpuStackCookieMarker
 } from './windows-stack-cookie-fallback'
 import { readWindowsUserEnvVar } from './windows-user-env'
-import { isPackagedInstallPath as isPackagedInstallPathUnderRoots } from './workspace-cwd'
+import { isPackagedInstallPath as isPackagedInstallPathUnderRoots, workspaceDirectoryExists } from './workspace-cwd'
 import { readWslWindowsClipboardImage } from './wsl-clipboard-image'
 import { resolvePickerDefaultPath, setActiveGatewayProfile, setWslBridgeProfileState } from './wsl-path-bridge'
 
@@ -4845,21 +4845,19 @@ function resolveHermesCwd() {
   return app.getPath('home')
 }
 
-function sanitizeWorkspaceCwd(cwd) {
+async function sanitizeWorkspaceCwd(cwd) {
   const trimmed = typeof cwd === 'string' ? cwd.trim() : ''
 
   if (!trimmed || isPackagedInstallPath(trimmed)) {
     return { cwd: resolveHermesCwd(), sanitized: Boolean(trimmed) }
   }
 
-  try {
-    const resolved = path.resolve(trimmed)
+  const resolved = path.resolve(trimmed)
 
-    if (directoryExists(resolved)) {
-      return { cwd: resolved, sanitized: false }
-    }
-  } catch {
-    // Fall through to the resolved default.
+  // Timeout/permission failures preserve the saved path: only a proven missing
+  // directory selects the default. UNC/WSL probing must not block the main loop.
+  if (await workspaceDirectoryExists(resolved)) {
+    return { cwd: resolved, sanitized: false }
   }
 
   return { cwd: resolveHermesCwd(), sanitized: Boolean(trimmed) }
@@ -15530,7 +15528,7 @@ ipcMain.handle('hermes:window:openInTerminal', async (_event, sessionId, opts) =
       return { ok: false, error: 'Hermes is not installed yet' }
     }
 
-    const { cwd } = sanitizeWorkspaceCwd(opts?.cwd)
+    const { cwd } = await sanitizeWorkspaceCwd(opts?.cwd)
     const scriptDir = path.join(app.getPath('userData'), 'open-in-terminal')
     fs.mkdirSync(scriptDir, { recursive: true })
 
