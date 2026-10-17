@@ -180,13 +180,26 @@ def _is_gateway_approval_context() -> bool:
     delivery routing): falling through would submit a pending approval with no
     listener and block the job indefinitely; unattended platforms likewise.
 
-    Unattended programmatic platforms (webhook, msgraph_webhook, api_server) are excluded for the same
-    reason: those adapters have no ``send_exec_approval`` and no way to receive ``/approve`` replies.
-    Submitting a pending approval there blocks the session for the full approval timeout (60-300 s) with no
-    human who can resolve it (#37284, 87509). Their dangerous-command handling is governed by
-    ``approvals.unattended_mode`` config (default deny), mirroring cron.
+    Unattended programmatic platforms stay excluded (#37284, 87509). The
+    api_server durable-run lane is interactive only while its exact live SSE
+    stream has an observer; a generic notifier or stale run grants no presence.
+    Presence permits a prompt, never an approval or configuration change.
     """
-    if _is_cron_approval_context() or _is_unattended_platform_approval_context():
+    if _is_cron_approval_context() or _is_single_query_approval_context():
+        return False
+    if _get_session_platform() == "api_server":
+        # A registered notifier alone can outlive its reader. Only the durable
+        # run adapter mints this capability, bound to that exact live run/stream.
+        from tools.approval import _gateway_notify_cb
+        notify = _gateway_notify_cb(get_current_session_key())
+        observer_present = getattr(notify, "_hermes_run_observer_present", None)
+        if not callable(observer_present):
+            return False
+        try:
+            return observer_present() is True
+        except Exception:
+            return False
+    if _is_unattended_platform_approval_context():
         return False
     return env_var_enabled("HERMES_GATEWAY_SESSION") or bool(_get_session_platform())
 
