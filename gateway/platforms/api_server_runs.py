@@ -966,6 +966,19 @@ def _make_approval_notify(self, run: _RunLaunch, *, _api_server) -> Callable[[di
         with suppress(Exception):
             loop.call_soon_threadsafe(q.put_nowait, event)
 
+    def _observer_present() -> bool:
+        # Approval callbacks are registered before the client attaches SSE.
+        # Presence is checked at the gate, never inferred from registration.
+        return (
+            self._run_streams.get(run_id) is q
+            and self._run_approval_sessions.get(run_id) == run.approval_session_key
+            and run_id not in self._stopping_run_ids
+            and self._run_statuses.get(run_id, {}).get("status") in {"running", "waiting_for_approval"}
+            and not q.terminal
+            and bool(q.subscribers)
+        )
+
+    _approval_notify._hermes_run_observer_present = _observer_present
     return _approval_notify
 
 
