@@ -39,6 +39,11 @@ import os
 import re
 import sys
 
+# A gateway started with -m is later imported by its canonical name. Reuse
+# this module so the consumed --profile flag cannot fall back to active_profile.
+if __name__ == "__main__":
+    sys.modules.setdefault("hermes_cli.main", sys.modules[__name__])
+
 # Inline path math so ``python hermes_cli/main.py`` (script mode: sys.path[0]
 # is hermes_cli/, not the repo root) can import hermes_cli._startup_fast.
 _bootstrap_root = os.path.realpath(os.path.join(os.path.dirname(__file__), os.pardir))

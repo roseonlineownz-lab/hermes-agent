@@ -18,6 +18,20 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _import_cli_without_installation_side_effects(tmp_path_factory):
+    """Profile unit tests must not bootstrap the host installation on import."""
+    home = tmp_path_factory.mktemp("profile-cli-import")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("HERMES_HOME", str(home))
+        patch.setattr("hermes_constants._get_platform_default_hermes_home", lambda: home)
+        patch.setattr("hermes_cli._early_recovery.restore_interrupted_pull", lambda *a, **kw: False)
+        patch.setattr("hermes_cli._early_recovery.recover_if_needed", lambda *a, **kw: None)
+        patch.setattr("hermes_cli.venv_sync.prepare_launch", lambda *a, **kw: None)
+        patch.setattr("pm.environments.activate_dependencies", lambda *a, **kw: None)
+        from hermes_cli import main  # noqa: F401
+
+
 @pytest.fixture(autouse=True)
 def _platform_home(tmp_path, monkeypatch):
     monkeypatch.setattr("hermes_constants._get_platform_default_hermes_home", lambda: tmp_path / ".hermes")
@@ -356,6 +370,8 @@ class TestGeneralizedSupervisorMarkers:
         (tmp_path / "home").mkdir()
         from hermes_cli.gateway import generate_systemd_unit
 
+        monkeypatch.setattr("hermes_cli.gateway.get_python_path", lambda: sys.executable)
+        monkeypatch.setattr("hermes_cli.gateway.PROJECT_ROOT", tmp_path / "repo")
         unit = generate_systemd_unit()
         assert 'Environment="HERMES_SUPERVISED_CHILD=1"' in unit
 
@@ -366,6 +382,8 @@ class TestGeneralizedSupervisorMarkers:
         (tmp_path / "home").mkdir()
         from hermes_cli.gateway import generate_launchd_plist
 
+        monkeypatch.setattr("hermes_cli.gateway.get_python_path", lambda: sys.executable)
+        monkeypatch.setattr("hermes_cli.gateway.PROJECT_ROOT", tmp_path / "repo")
         plist = generate_launchd_plist()
         assert "<key>HERMES_SUPERVISED_CHILD</key>" in plist
 
